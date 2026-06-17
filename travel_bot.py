@@ -1,4 +1,6 @@
 import os
+from flask import Flask
+from threading import Thread
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
