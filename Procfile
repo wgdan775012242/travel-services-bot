@@ -1,0 +1,1 @@
+worker: python3 travel_bot.py
