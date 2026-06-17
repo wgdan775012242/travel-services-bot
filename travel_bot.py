@@ -21,7 +21,7 @@ async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = model.generate_content(f"أنت مساعد لمكتب سفريات، أجب على هذا السؤال بطريقة مهنية: {user_text}")
         await update.message.reply_text(response.text)
     except Exception as e:
-        await update.message.reply_text("عذراً، حدث خطأ في الرد، يرجى المحاولة لاحقاً.")
+        await update.message.reply_text("print(f"Error details: {e}")")
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TOKEN).build()
