@@ -1,33 +1,41 @@
 import os
+import logging
 from flask import Flask
 from threading import Thread
-import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 import google.generativeai as genai
 
-# جلب المفاتيح من إعدادات المنصة (Environment Variables)
+# إعداد السجلات (Logging) لمعاينة أي نشاط
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
+# 1. إعداد خادم ويب وهمي (Flask) لإرضاء منصة Render ومنع إغلاق البوت
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running successfully!"
+
+def run_flask():
+    # جلب المنفذ تلقائياً من Render أو استخدام 8080 كافتراضي
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# تشغيل خادم الويب في خلفية منفصلة تماماً عن البوت
+flask_thread = Thread(target=run_flask)
+flask_thread.start()
+
+# 2. جلب المفاتيح من إعدادات البيئة في Render
 TOKEN = os.environ.get("TOKEN")
 API_KEY = os.environ.get("API_KEY")
 
-# إعداد Gemini
+# تهيئة الذكاء الاصطناعي (Gemini)
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-pro')
 
+# 3. دالة الترحيب عند الضغط على /start في تليجرام
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('أهلاً بك في مكتب أبو مجد الحداد للسفريات، كيف يمكنني مساعدتك اليوم؟')
-
-async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    try:
-        response = model.generate_content(f"أنت مساعد لمكتب سفريات، أجب على هذا السؤال بطريقة مهنية: {user_text}")
-        await update.message.reply_text(response.text)
-    except Exception as e:
-        await update.message.reply_text("print(f"Error details: {e}")")
-
-if __name__ == '__main__':
-    application = ApplicationBuilder().token(TOKEN).build()
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), ai_reply))
-    print("Bot is running...")
-    application.run_polling()
+    await update.message.reply_
