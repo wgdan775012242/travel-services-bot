@@ -2,6 +2,7 @@ import os
 import json
 import urllib.request
 import logging
+import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
@@ -27,13 +28,18 @@ def ask_gemini_direct(user_message):
     data = {"contents": [{"parts": [{"text": prompt}]}]}
     headers = {"Content-Type": "application/json"}
     
-    try:
-        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            return result['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        return "عذراً، الخدمة غير متاحة حالياً."
+    # محاولة الاتصال 3 مرات في حال حدوث خطأ 503
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST')
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                return result['candidates'][0]['content']['parts'][0]['text']
+        except Exception as e:
+            logging.warning(f"محاولة {attempt+1} فشلت: {e}")
+            time.sleep(2) # انتظار ثانيتين قبل إعادة المحاولة
+            
+    return "عذراً، خدمة الذكاء الاصطناعي مضغوطة حالياً، يرجى التواصل معنا مباشرة على الرقم: 967775012242+"
 
 async def start(update, context):
     await update.message.reply_text('أهلاً بك في مكتب أبو مجد الحداد للسفريات!')
