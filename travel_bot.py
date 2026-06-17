@@ -28,9 +28,10 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 TOKEN = os.environ.get("TOKEN")
 API_KEY = os.environ.get("API_KEY")
 
-# --- دالة الاتصال المباشر بـ Gemini (بدون مكتبات جوجل القديمة) ---
+# --- دالة الاتصال المباشر بـ Gemini ---
 def ask_gemini_direct(user_message):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+    # تم تحديث الرابط إلى الموديل الحديث gemini-2.5-flash لأن جوجل أوقفت الموديل القديم
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={API_KEY}"
     prompt = f"المستخدم يسأل: {user_message}\nأنت مساعد ذكي لمكتب سفريات (مكتب أبو مجد الحداد للسفريات)، أجب على هذا السؤال بطريقة مهنية، دقيقة، ومفصلة باللغة العربية."
     
     data = {"contents": [{"parts": [{"text": prompt}]}]}
