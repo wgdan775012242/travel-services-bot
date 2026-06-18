@@ -10,7 +10,7 @@ API_KEY = os.environ.get("API_KEY")
 
 # إعداد Gemini
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-pro')
+model = genai.GenerativeModel('gemini')
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text('أهلاً بك في مكتب أبو مجد الحداد للسفريات، كيف يمكنني مساعدتك اليوم؟')
