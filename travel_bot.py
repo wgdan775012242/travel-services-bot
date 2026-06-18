@@ -12,22 +12,38 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = os.environ.get("TOKEN")
 API_KEY = os.environ.get("API_KEY")
 
-# --- معلومات المكتب (مدمجة) ---
+# --- معلومات المكتب وتوجيهات الذكاء الاصطناعي الصارمة ---
 OFFICE_INFO = """
 معلومات مكتب أبو مجد الحداد للسفريات:
 - الهاتف: 967775012242+
 - البريد الإلكتروني: what775012242@outlook.sa
 - فيسبوك: ابومجد الحداد خدمات سفريات وسياحه
 - إنستغرام: وجدان الحداد-ابومجدالحداد
-- الخدمات: تأشيرات، حجوزات طيران، خدمات سياحية، وسفر.
+- التخصص: تأشيرات العمل من اليمن إلى السعودية، حجوزات طيران، خدمات سياحية، وسفر.
+"""
+
+SYSTEM_PROMPT = f"""
+{OFFICE_INFO}
+أنت مساعد آلي ذكي يمثل "مكتب أبو مجد الحداد".
+مهمتك الوحيدة والأساسية هي الرد على استفسارات العملاء في المجالات التالية فقط:
+1. السفر والسياحة.
+2. تأشيرات العمل (تحديداً من اليمن إلى السعودية).
+3. المعاملات الخاصة بالسفر وحجوزات الطيران.
+
+تعليمات صارمة يجب الالتزام بها:
+- أجب بأسلوب مهني، محترم، وواضح.
+- إذا سألك المستخدم عن أي موضوع خارج هذه التخصصات (مثل البرمجة، السياسة، الأخبار، أو مواضيع عامة)، اعتذر بلباقة وقل: "عذراً، أنا مساعد مخصص فقط لخدمات السفر والسياحة وتأشيرات العمل بمكتب أبو مجد الحداد."
+- لا تقم بتأليف أسعار من عندك. إذا سأل عن سعر غير ثابت، اطلب منه التواصل عبر الهاتف.
 """
 
 # --- دالة الاتصال المباشر بـ Gemini ---
 def ask_gemini_direct(user_message):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
-    prompt = f"{OFFICE_INFO}\nبصفتك مساعداً ذكياً لمكتب أبو مجد الحداد، أجب على رسالة المستخدم: '{user_message}' بأسلوب مهني وودود."
     
-    data = {"contents": [{"parts": [{"text": prompt}]}]}
+    # دمج التعليمات الصارمة مع رسالة العميل
+    full_prompt = f"{SYSTEM_PROMPT}\n\nرسالة العميل: '{user_message}'\nالرد المناسب:"
+    
+    data = {"contents": [{"parts": [{"text": full_prompt}]}]}
     headers = {"Content-Type": "application/json"}
     
     try:
@@ -36,24 +52,31 @@ def ask_gemini_direct(user_message):
             result = json.loads(response.read().decode('utf-8'))
             return result['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        logging.error(f"خطأ في الاتصال بـ Gemini 3: {e}")
-        return "عذراً، الخدمة غير متاحة حالياً، يرجى التواصل معنا مباشرة على الرقم: 967775012242+"
+        logging.error(f"خطأ في الاتصال بـ Gemini: {e}")
+        return "عذراً، الخدمة تواجه ضغطاً في الوقت الحالي، يرجى التواصل معنا مباشرة على الرقم: 967775012242+"
 
 # --- دوال تليجرام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('أهلاً بك في مكتب أبو مجد الحداد للسفريات! أنا مساعدك الذكي، كيف يمكنني خدمتك اليوم؟')
+    welcome_text = (
+        "أهلاً بك في مكتب أبو مجد الحداد للسفريات! ✈️\n\n"
+        "أنا مساعدك الآلي، متواجد لخدمتك في استفسارات السفر، السياحة، "
+        "وتأشيرات العمل من اليمن إلى السعودية.\n\n"
+        "كيف يمكنني خدمتك اليوم؟"
+    )
+    await update.message.reply_text(welcome_text)
 
 async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # إرسال رسالة العميل إلى الذكاء الاصطناعي مع التعليمات المقيدة
     response = ask_gemini_direct(update.message.text)
     await update.message.reply_text(response)
 
 # --- التشغيل الرئيسي ---
 if __name__ == '__main__':
     if not TOKEN:
-        print("خطأ: يرجى التأكد من إضافة TOKEN في إعدادات Render")
+        print("خطأ: يرجى التأكد من إضافة TOKEN في متغيرات البيئة")
     else:
         application = ApplicationBuilder().token(TOKEN).build()
         application.add_handler(CommandHandler("start", start))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
-        print("البوت يعمل الآن ويستمع للرسائل...")
+        print("البوت يعمل الآن ويستمع لرسائل العملاء بشكل مخصص...")
         application.run_polling()
