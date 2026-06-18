@@ -36,7 +36,7 @@ def ask_gemini_direct(user_message):
             result = json.loads(response.read().decode('utf-8'))
             return result['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        logging.error(f"خطأ في الاتصال بـ Gemini: {e}")
+        logging.error(f"خطأ في الاتصال بـ Gemini 3: {e}")
         return "عذراً، الخدمة غير متاحة حالياً، يرجى التواصل معنا مباشرة على الرقم: 967775012242+"
 
 # --- دوال تليجرام ---
