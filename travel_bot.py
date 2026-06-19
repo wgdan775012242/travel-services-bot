@@ -163,8 +163,9 @@ async def main():
 
     await application.bot.delete_webhook(drop_pending_updates=True)
 
+    # تم إصلاح السطر أدناه بإزالة الشرطة المائلة الخلفية
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, ai_reply))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
     application.add_handler(CallbackQueryHandler(button_handler))
 
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
