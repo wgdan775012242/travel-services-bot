@@ -5,7 +5,7 @@ import logging
 from threading import Thread
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import urllib.request
 import time
 from asyncio import Semaphore
@@ -28,8 +28,8 @@ def home():
     return """
     <h2>✅ البوت يعمل بنجاح 24/7</h2>
     <p><strong>مكتب أبو مجد الحداد للسفريات والتأشيرات</strong></p>
-    <p>الرابط: <a href="https://travel-services-bot.onrender.com">https://travel-services-bot.onrender.com</a></p>
-    <small>Free Tier • قد يستغرق الرد 10-40 ثانية بعد الخمول</small>
+    <p>الرابط: https://travel-services-bot.onrender.com</p>
+    <small>Free Tier • قد يستغرق الرد 10-40 ثانية</small>
     """
 
 # ====================== Gemini ======================
@@ -81,7 +81,7 @@ async def ask_gemini(user_message: str, max_retries: int = 5) -> str:
                 return "عذراً، الخدمة مزدحمة حالياً.\nيرجى التواصل مباشرة على: +967775012242"
             await asyncio.sleep(2)
 
-    return "حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى أو الاتصال على +967775012242"
+    return "حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى."
 
 
 # ====================== Keyboard ======================
@@ -97,8 +97,7 @@ def get_main_keyboard():
 # ====================== Handlers ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 أهلاً وسهلاً بك في *مكتب أبو مجد الحداد للسفريات والتأشيرات*\n\n"
-        "كيف يمكنني خدمتك اليوم؟",
+        "👋 أهلاً وسهلاً بك في *مكتب أبو مجد الحداد*\n\nكيف يمكنني خدمتك اليوم؟",
         parse_mode='Markdown',
         reply_markup=get_main_keyboard()
     )
@@ -124,13 +123,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     if query.data == "visa":
-        text = "🛂 للحصول على تأشيرة عمل إلى السعودية، يرجى إرسال:\n- اسمك الكامل\n- رقم الجواز\n- المهنة\n- مدة العقد"
+        text = "🛂 لتأشيرة العمل أرسل:\n- الاسم الكامل\n- رقم الجواز\n- المهنة"
     elif query.data == "flights":
-        text = "✈️ للحجوزات الجوية، أخبرني بـ:\n- المدينة المغادرة\n- المدينة الوجهة\n- التاريخ المفضل"
+        text = "✈️ أخبرني بتفاصيل الحجز:\n- المدينة المغادرة\n- الوجهة\n- التاريخ"
     elif query.data == "contact":
-        text = "📞 يمكنك التواصل مباشرة:\n+967775012242"
+        text = "📞 التواصل المباشر:\n+967775012242"
     else:
-        text = "اختر من القائمة أدناه 👇"
+        text = "اختر من القائمة 👇"
     
     await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
 
@@ -163,25 +162,20 @@ async def main():
     application = Application.builder().token(TOKEN).build()
 
     await application.bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Webhook deleted")
 
-    # Handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, ai_reply))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    # Set Webhook
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
     if render_url:
         webhook_url = f"{render_url.rstrip('/')}/webhook"
         await application.bot.set_webhook(webhook_url)
         logger.info(f"Webhook set: {webhook_url}")
-    else:
-        logger.warning("No RENDER_EXTERNAL_URL - using polling fallback")
 
     await application.initialize()
     await application.start()
-    logger.info("✅ Bot is fully running!")
+    logger.info("✅ Bot started successfully!")
 
 
 def run_flask():
@@ -189,7 +183,6 @@ def run_flask():
     flask_app.run(host='0.0.0.0', port=port, debug=False)
 
 
-# ====================== Run ======================
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
     
