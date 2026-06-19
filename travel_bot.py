@@ -140,7 +140,8 @@ async def main():
 
     # إضافة Handlers
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, ai_reply))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
+
 
     # إعداد Webhook
     webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
