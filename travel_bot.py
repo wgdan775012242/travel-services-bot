@@ -4,7 +4,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 # --- الإعدادات الأساسية ---
 # يسحب التوكن من إعدادات Render (يجب إضافته في Environment Variables)
-TOKEN = os.environ.get("BOT_TOKEN", "ضع_توكن_البوت_الخاص_بك_هنا_مؤقتاً")
+TOKEN = os.environ.get("BOT_TOKEN", "8808798356:AAGZMTkXTEd3POomQSSgU74YWYUT-4Yo-8U")
 
 # يسحب المنفذ (Port) تلقائياً من Render
 PORT = int(os.environ.get("PORT", "10000"))
