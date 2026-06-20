@@ -159,11 +159,11 @@ async def main():
         logger.error("TOKEN أو API_KEY مفقود!")
         return
 
-    application = Application.builder().token(TOKEN).build()
+    # تم تعديل هذا السطر بإضافة updater(None) لمنع تعارض getUpdates مع الـ Webhook
+    application = Application.builder().token(TOKEN).updater(None).build()
 
     await application.bot.delete_webhook(drop_pending_updates=True)
 
-    # تم إصلاح السطر أدناه بإزالة الشرطة المائلة الخلفية
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
     application.add_handler(CallbackQueryHandler(button_handler))
