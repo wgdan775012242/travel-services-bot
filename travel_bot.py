@@ -2,13 +2,10 @@ import os
 import json
 import asyncio
 import logging
-from threading import Thread
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
-import urllib.request
-import time
-from asyncio import Semaphore
+import httpx  # تم استبدال urllib بـ httpx لدعم الأكواد غير المتزامنة
 
 # ====================== Logging ======================
 logging.basicConfig(
@@ -28,8 +25,7 @@ def home():
     return """
     <h2>✅ البوت يعمل بنجاح 24/7</h2>
     <p><strong>مكتب أبو مجد الحداد للسفريات والتأشيرات</strong></p>
-    <p>الرابط: https://travel-services-bot.onrender.com</p>
-    <small>Free Tier • قد يستغرق الرد 10-40 ثانية</small>
+    <small>Free Tier • تم إصلاح استقرار الاتصال</small>
     """
 
 # ====================== Gemini ======================
@@ -62,27 +58,28 @@ async def ask_gemini(user_message: str, max_retries: int = 5) -> str:
 
     headers = {"Content-Type": "application/json"}
 
-    for attempt in range(max_retries):
-        try:
-            req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST')
-            with urllib.request.urlopen(req, timeout=35) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                return result['candidates'][0]['content']['parts'][0]['text'].strip()
-
-        except Exception as e:
-            error_str = str(e).lower()
-            logger.error(f"Gemini attempt {attempt+1} failed: {e}")
-            
-            if "429" in error_str or "resourceexhausted" in error_str:
-                wait = (2 ** attempt) * 2.5
-                await asyncio.sleep(wait)
-                continue
-            elif attempt == max_retries - 1:
-                return "عذراً، الخدمة مزدحمة حالياً.\nيرجى التواصل مباشرة على: +967775012242"
-            await asyncio.sleep(2)
+    # استخدام httpx.AsyncClient لضمان عدم حدوث Block أو CancelledError
+    async with httpx.AsyncClient() as client:
+        for attempt in range(max_retries):
+            try:
+                response = await client.post(url, json=data, headers=headers, timeout=35.0)
+                if response.status_code == 200:
+                    result = response.json()
+                    return result['candidates'][0]['content']['parts'][0]['text'].strip()
+                elif response.status_code == 429:
+                    logger.warning(f"Gemini rate limit hit, retrying...")
+                    wait = (2 ** attempt) * 2.5
+                    await asyncio.sleep(wait)
+                    continue
+                else:
+                    logger.error(f"Gemini API error {response.status_code}: {response.text}")
+            except Exception as e:
+                logger.error(f"Gemini attempt {attempt+1} failed: {e}")
+                if attempt == max_retries - 1:
+                    return "عذراً، الخدمة مزدحمة حالياً.\nيرجى التواصل مباشرة على: +967775012242"
+                await asyncio.sleep(2)
 
     return "حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى."
-
 
 # ====================== Keyboard ======================
 def get_main_keyboard():
@@ -93,7 +90,6 @@ def get_main_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-
 # ====================== Handlers ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -102,21 +98,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
-
-semaphore = Semaphore(4)
+semaphore = asyncio.Semaphore(4)
 
 async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # حماية من الرسائل الفارغة أو التحديثات الغريبة
+    if not update.message or not update.message.text:
+        return
+        
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    
     user_message = update.message.text.strip()
     
-    async with semaphore:
-        response = await ask_gemini(user_message)
-        try:
+    # استخدام معالجة الأخطاء والـ Semaphore لحماية الاتصال من الإلغاء
+    try:
+        async with semaphore:
+            response = await ask_gemini(user_message)
             await update.message.reply_text(response, reply_markup=get_main_keyboard())
-        except:
-            await update.message.reply_text(response)
-
+    except asyncio.CancelledError:
+        logger.warning("المهمة تم إلغاؤها بشكل طبيعي بواسطة النظام.")
+        raise
+    except Exception as e:
+        logger.error(f"Error in ai_reply: {e}")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -131,67 +132,77 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text = "اختر من القائمة 👇"
     
-    await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
+    try:
+        await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
+    except Exception as e:
+        logger.error(f"Error updating message text: {e}")
 
-
-# ====================== Webhook ======================
+# ====================== Webhook Setup ======================
 application = None
 
 @flask_app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
     global application
     if not application:
-        return "Not ready", 503
+        return "Bot Not Ready", 503
+    
     try:
         update_dict = request.get_json(force=True)
-        update = Update.de_json(update_dict, application.bot)
-        await application.process_update(update)
+        # نقوم بجدولة التحديث داخل الـ Event loop الخاص بالبوت لمنع الـ CancelledError
+        asyncio.run_coroutine_threadsafe(
+            application.update_queue.put(Update.de_json(update_dict, application.bot)),
+            application.loop
+        )
         return "OK", 200
     except Exception as e:
-        logger.error(f"Webhook Error: {e}")
+        logger.error(f"Webhook Route Error: {e}")
         return "ERROR", 500
 
-
-# ====================== Main ======================
+# ====================== Main Logic ======================
 async def main():
     global application
     if not TOKEN or not GEMINI_API_KEY:
         logger.error("TOKEN أو API_KEY مفقود!")
         return
 
-    # تم تعديل هذا السطر بإضافة updater(None) لمنع تعارض getUpdates مع الـ Webhook
-    application = Application.builder().token(TOKEN).updater(None).build()
-
-    await application.bot.delete_webhook(drop_pending_updates=True)
+    # إنشاء التطبيق باستخدام نظام الـ Webhook المدمج الآمن
+    application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
     application.add_handler(CallbackQueryHandler(button_handler))
 
+    # تهيئة وقراءة حالة البوت بالكامل
+    await application.initialize()
+    
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
     if render_url:
         webhook_url = f"{render_url.rstrip('/')}/webhook"
-        await application.bot.set_webhook(webhook_url)
-        logger.info(f"Webhook set: {webhook_url}")
-
-    await application.initialize()
+        await application.bot.set_webhook(webhook_url, drop_pending_updates=True)
+        logger.info(f"Webhook successfully registered to: {webhook_url}")
+    
     await application.start()
-    logger.info("✅ Bot started successfully!")
-
+    
+    # إبقاء الـ Event Loop يعمل بالتوازي مع الـ Webhook Queue
+    async with application:
+        while True:
+            await asyncio.sleep(3600)
 
 def run_flask():
+    from werkzeug.serving import make_server
     port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host='0.0.0.0', port=port, debug=False)
-
+    # تشغيل Flask كخادم مستقل وآمن بدون خيوط متعارضة
+    server = make_server('0.0.0.0', port, flask_app)
+    server.serve_forever()
 
 if __name__ == '__main__':
-    Thread(target=run_flask, daemon=True).start()
+    # 1. تشغيل Flask في الخلفية (Thread منفصل)
+    import threading
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
     
+    # 2. تشغيل البوت في الـ Main Thread لإدارة الـ Async بشكل سليم
     try:
         asyncio.run(main())
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        logger.info("Bot stopped")
-    except Exception as e:
-        logger.error(f"Critical error: {e}")
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot execution stopped safely.")
