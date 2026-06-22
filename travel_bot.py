@@ -1,5 +1,4 @@
 import os
-import json
 import asyncio
 import logging
 import httpx
@@ -7,7 +6,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse
-import uvicorn
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
@@ -24,11 +22,10 @@ TOKEN = os.environ.get("TOKEN")
 GEMINI_API_KEY = os.environ.get("API_KEY")
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
-# التأكد من وجود التوكن
 if not TOKEN:
     logger.error("⚠️ لم يتم العثور على TOKEN البوت في متغيرات البيئة!")
 
-# ====================== بناء تطبيق البوت (PTB) ======================
+# ====================== بناء تطبيق البوت ======================
 ptb_app = Application.builder().token(TOKEN).build()
 semaphore = asyncio.Semaphore(4)
 
@@ -43,7 +40,7 @@ async def ask_gemini(user_message: str, max_retries: int = 3) -> str:
 معلومات مكتب أبو مجد الحداد للسفريات:
 - الهاتف: +967775012242
 - البريد: what775012242@outlook.sa
-- التخصص: تأشيرات عمل يمن → سعودية، حجوزات طيران، خدمات سياحية.
+- التخصص: تأشيرات عمل يمن -> سعودية، حجوزات طيران، خدمات سياحية.
 """
     SYSTEM_PROMPT = f"""
 {OFFICE_INFO}
@@ -65,19 +62,26 @@ async def ask_gemini(user_message: str, max_retries: int = 3) -> str:
                 response = await client.post(url, json=data, headers=headers, timeout=30.0)
                 if response.status_code == 200:
                     result = response.json()
-                    return result['candidates'][0]['content']['parts'][0]['text'].strip()
+                    try:
+                        return result['candidates'][0]['content']['parts'][0]['text'].strip()
+                    except (KeyError, IndexError) as e:
+                        logger.error(f"خطأ في تحليل الاستجابة: {result}")
+                        return "عذراً، لم أتمكن من صياغة الرد بشكل صحيح. يرجى إعادة المحاولة."
+                        
                 elif response.status_code == 429:
                     logger.warning("ضغط على خوادم Gemini، جاري إعادة المحاولة...")
                     await asyncio.sleep((2 ** attempt) * 2)
                     continue
                 else:
                     logger.error(f"Gemini API error {response.status_code}: {response.text}")
+                    if response.status_code == 400:
+                        return "حدث خطأ (تأكد من صلاحية مفتاح الـ API الخاص بـ Gemini في إعدادات Render)."
             except Exception as e:
                 logger.error(f"محاولة الاتصال {attempt+1} فشلت: {e}")
                 if attempt == max_retries - 1:
                     return "عذراً، الخدمة مزدحمة حالياً.\nيرجى التواصل مباشرة على: +967775012242"
                 await asyncio.sleep(2)
-    return "حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى."
+    return "حدث خطأ غير متوقع في خوادم الذكاء الاصطناعي. يرجى المحاولة مرة أخرى."
 
 # ====================== لوحة المفاتيح والأزرار ======================
 def get_main_keyboard():
@@ -121,60 +125,51 @@ async def handle_buttons(update: Update, context):
         text = "✈️ أخبرني بتفاصيل الحجز:\n- المدينة المغادرة\n- الوجهة\n- التاريخ"
     elif query.data == "contact":
         text = "📞 التواصل المباشر:\n+967775012242"
-    
-    try:
-        await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
-    except Exception as e:
-        logger.error(f"Error updating button text: {e}")
+        
+    # تحديث الرسالة بالزر الذي تم اختياره مع إبقاء الأزرار
+    await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
 
-# ربط الدوال بالبوت
+# ====================== ربط الدوال بالبوت ======================
 ptb_app.add_handler(CommandHandler("start", start_cmd))
 ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 ptb_app.add_handler(CallbackQueryHandler(handle_buttons))
 
-# ====================== إعداد خادم FastAPI ======================
+# ====================== إعداد FastAPI & Webhook ======================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # عند تشغيل السيرفر
+    # تشغيل تطبيق التيليجرام في الخلفية وتعيين رابط الـ Webhook
     await ptb_app.initialize()
     if RENDER_URL:
+        # التأكد من إزالة الشرطة المائلة الزائدة في نهاية الرابط إن وجدت
         webhook_url = f"{RENDER_URL.rstrip('/')}/webhook"
-        await ptb_app.bot.set_webhook(webhook_url, drop_pending_updates=True)
-        logger.info(f"✅ تم تفعيل Webhook بنجاح على: {webhook_url}")
+        await ptb_app.bot.set_webhook(url=webhook_url)
+        logger.info(f"✅ تم ربط Webhook بنجاح: {webhook_url}")
+    else:
+        logger.warning("⚠️ RENDER_EXTERNAL_URL مفقود! لم يتم تفعيل Webhook.")
+    
     await ptb_app.start()
-    
-    yield # هنا يعمل السيرفر
-    
-    # عند إيقاف السيرفر
+    yield
+    # الإغلاق الآمن عند إيقاف السيرفر
     await ptb_app.stop()
     await ptb_app.shutdown()
 
+# إنشاء السيرفر وربطه بدورة الحياة
 app = FastAPI(lifespan=lifespan)
 
-@app.get("/", response_class=HTMLResponse)
-async def home():
-    return """
-    <html>
-        <body style="font-family: Arial, sans-serif; text-align: center; padding-top: 50px; background-color: #f4f4f9;">
-            <h1 style="color: #4CAF50;">✅ البوت يعمل بنجاح 24/7</h1>
-            <h2>مكتب أبو مجد الحداد للسفريات والتأشيرات</h2>
-            <p style="color: #666;">🚀 <b>Powered by:</b> FastAPI & Python-Telegram-Bot v20</p>
-        </body>
-    </html>
-    """
-
 @app.post("/webhook")
-async def webhook_endpoint(request: Request):
+async def telegram_webhook(request: Request):
+    """نقطة استقبال التحديثات من تيليجرام وتمريرها للبوت"""
     try:
-        data = await request.json()
-        update = Update.de_json(data, ptb_app.bot)
-        await ptb_app.process_update(update)
+        update_data = await request.json()
+        update = Update.de_json(update_data, ptb_app.bot)
+        await ptb_app.update_queue.put(update)
         return Response(status_code=200)
     except Exception as e:
-        logger.error(f"Webhook Error: {e}")
+        logger.error(f"خطأ في الـ Webhook: {e}")
         return Response(status_code=500)
 
-# ====================== التشغيل المحلي (للتجارب فقط) ======================
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run("travel_bot:app", host="0.0.0.0", port=port)
+@app.get("/")
+async def root():
+    """صفحة للتحقق من أن السيرفر يعمل بنجاح"""
+    return HTMLResponse("<h1>✅ السيرفر والبوت يعملان بنجاح!</h1>")
+
