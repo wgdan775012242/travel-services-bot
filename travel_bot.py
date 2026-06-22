@@ -21,18 +21,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ====================== متغيرات البيئة ======================
-TOKEN = os.environ.get("TOKEN")
+TOKEN = .environ.get("TOKEN")
 GEMINI_API_KEY = os.environ.get("API_KEY")
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
-if not TOKEN:
-    logger.error("⚠️ لم يتم العثور على TOKEN البوت في متغيرات البيئة!")
-
-# تهيئة مفتاح الذكاء الاصطناعي فور سحبه من البيئة
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-else:
-    logger.error("⚠️ لم يتم العثور على API_KEY الخاص بـ Gemini!")
 
 # ====================== بناء تطبيق البوت ======================
 ptb_app = Application.builder().token(TOKEN).build()
