@@ -1,14 +1,17 @@
 import os
 import asyncio
 import logging
-import httpx
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse
+import uvicorn
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+
+# استيراد مكتبة جوجل الرسمية للذكاء الاصطناعي
+import google.generativeai as genai
 
 # ====================== إعدادات السجلات (Logging) ======================
 logging.basicConfig(
@@ -25,22 +28,26 @@ RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 if not TOKEN:
     logger.error("⚠️ لم يتم العثور على TOKEN البوت في متغيرات البيئة!")
 
+# تهيئة مفتاح الذكاء الاصطناعي فور سحبه من البيئة
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+else:
+    logger.error("⚠️ لم يتم العثور على API_KEY الخاص بـ Gemini!")
+
 # ====================== بناء تطبيق البوت ======================
 ptb_app = Application.builder().token(TOKEN).build()
 semaphore = asyncio.Semaphore(4)
 
 # ====================== الذكاء الاصطناعي (Gemini) ======================
-async def ask_gemini(user_message: str, max_retries: int = 3) -> str:
+async def ask_gemini(user_message: str) -> str:
     if not GEMINI_API_KEY:
-        return "⚠️ خطأ في الإعدادات (مفتاح API مفقود). يرجى التواصل مع الإدارة."
+        return "⚠️ خطأ في الإعدادات (مفتاح API مفقود). يرجى التأكد من لوحة تحكم Render."
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
     OFFICE_INFO = """
 معلومات مكتب أبو مجد الحداد للسفريات:
 - الهاتف: +967775012242
 - البريد: what775012242@outlook.sa
-- التخصص: تأشيرات عمل يمن -> سعودية، حجوزات طيران، خدمات سياحية.
+- التخصص: تأشيرات عمل يمن → سعودية، حجوزات طيران، خدمات سياحية.
 """
     SYSTEM_PROMPT = f"""
 {OFFICE_INFO}
@@ -49,39 +56,22 @@ async def ask_gemini(user_message: str, max_retries: int = 3) -> str:
 إذا كان السؤال خارج النطاق، اعتذر واقترح التواصل المباشر.
 """
     full_prompt = f"{SYSTEM_PROMPT}\n\nرسالة العميل: {user_message}"
-    
-    data = {
-        "contents": [{"parts": [{"text": full_prompt}]}],
-        "generationConfig": {"temperature": 0.75, "maxOutputTokens": 1000}
-    }
-    headers = {"Content-Type": "application/json"}
 
-    async with httpx.AsyncClient() as client:
-        for attempt in range(max_retries):
-            try:
-                response = await client.post(url, json=data, headers=headers, timeout=30.0)
-                if response.status_code == 200:
-                    result = response.json()
-                    try:
-                        return result['candidates'][0]['content']['parts'][0]['text'].strip()
-                    except (KeyError, IndexError) as e:
-                        logger.error(f"خطأ في تحليل الاستجابة: {result}")
-                        return "عذراً، لم أتمكن من صياغة الرد بشكل صحيح. يرجى إعادة المحاولة."
-                        
-                elif response.status_code == 429:
-                    logger.warning("ضغط على خوادم Gemini، جاري إعادة المحاولة...")
-                    await asyncio.sleep((2 ** attempt) * 2)
-                    continue
-                else:
-                    logger.error(f"Gemini API error {response.status_code}: {response.text}")
-                    if response.status_code == 400:
-                        return "حدث خطأ (تأكد من صلاحية مفتاح الـ API الخاص بـ Gemini في إعدادات Render)."
-            except Exception as e:
-                logger.error(f"محاولة الاتصال {attempt+1} فشلت: {e}")
-                if attempt == max_retries - 1:
-                    return "عذراً، الخدمة مزدحمة حالياً.\nيرجى التواصل مباشرة على: +967775012242"
-                await asyncio.sleep(2)
-    return "حدث خطأ غير متوقع في خوادم الذكاء الاصطناعي. يرجى المحاولة مرة أخرى."
+    try:
+        # استخدام المكتبة الرسمية المستوردة
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # استدعاء غير متزامن لضمان عدم تعليق البوت
+        response = await model.generate_content_async(full_prompt)
+        
+        if response.text:
+            return response.text.strip()
+        else:
+            return "عذراً، لم أتمكن من صياغة رد مناسب. يرجى المحاولة مرة أخرى."
+
+    except Exception as e:
+        logger.error(f"Gemini API error: {e}")
+        return "عذراً، الخدمة مزدحمة حالياً أو هناك مشكلة في الاتصال.\nيرجى التواصل مباشرة على: +967775012242"
 
 # ====================== لوحة المفاتيح والأزرار ======================
 def get_main_keyboard():
@@ -127,49 +117,5 @@ async def handle_buttons(update: Update, context):
         text = "📞 التواصل المباشر:\n+967775012242"
         
     # تحديث الرسالة بالزر الذي تم اختياره مع إبقاء الأزرار
-    await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
-
-# ====================== ربط الدوال بالبوت ======================
-ptb_app.add_handler(CommandHandler("start", start_cmd))
-ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-ptb_app.add_handler(CallbackQueryHandler(handle_buttons))
-
-# ====================== إعداد FastAPI & Webhook ======================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # تشغيل تطبيق التيليجرام في الخلفية وتعيين رابط الـ Webhook
-    await ptb_app.initialize()
-    if RENDER_URL:
-        # التأكد من إزالة الشرطة المائلة الزائدة في نهاية الرابط إن وجدت
-        webhook_url = f"{RENDER_URL.rstrip('/')}/webhook"
-        await ptb_app.bot.set_webhook(url=webhook_url)
-        logger.info(f"✅ تم ربط Webhook بنجاح: {webhook_url}")
-    else:
-        logger.warning("⚠️ RENDER_EXTERNAL_URL مفقود! لم يتم تفعيل Webhook.")
-    
-    await ptb_app.start()
-    yield
-    # الإغلاق الآمن عند إيقاف السيرفر
-    await ptb_app.stop()
-    await ptb_app.shutdown()
-
-# إنشاء السيرفر وربطه بدورة الحياة
-app = FastAPI(lifespan=lifespan)
-
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-    """نقطة استقبال التحديثات من تيليجرام وتمريرها للبوت"""
     try:
-        update_data = await request.json()
-        update = Update.de_json(update_data, ptb_app.bot)
-        await ptb_app.update_queue.put(update)
-        return Response(status_code=200)
-    except Exception as e:
-        logger.error(f"خطأ في الـ Webhook: {e}")
-        return Response(status_code=500)
-
-@app.get("/")
-async def root():
-    """صفحة للتحقق من أن السيرفر يعمل بنجاح"""
-    return HTMLResponse("<h1>✅ السيرفر والبوت يعملان بنجاح!</h1>")
-
+        await query.edit_message_text(text=text, reply_markup=get_main_keyboard
