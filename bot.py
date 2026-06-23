@@ -81,4 +81,53 @@ async def handle_message(update: Update, context) -> None:
             return
 
     # Fallback to AI response if no local response matches
-    await ai_response(update, context)
+  await ai_response(update, context)
+def setup_application():
+    """Initializes the Telegram application."""
+    global application
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
+        return None
+    
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Run initialization in the background loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(app.initialize())
+    
+    return app
+
+# Initialize application once when the module is loaded
+if application is None:
+    application = setup_application()
+
+@flask_app.route("/")
+def index():
+    return "Bot is running!"
+
+@flask_app.route("/webhook", methods=["POST"])
+async def webhook():
+    """Webhook endpoint for Telegram updates."""
+    if application is None:
+        return "Application not initialized", 503
+        
+    if request.method == "POST":
+        try:
+            update = Update.de_json(request.get_json(force=True), application.bot)
+            # Use the running loop to process update
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(application.process_update(update))
+            return "ok"
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
+            return "error", 500
+    return ""
+
+if name == "main":
+    # For local testing
+    if application:
+        application.run_polling()
