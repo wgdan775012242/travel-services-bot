@@ -1,28 +1,27 @@
-import nest_asyncio
-nest_asyncio.apply()
 import os
 import logging
 import asyncio
+import threading
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import google.generativeai as genai
 
-# Enable logging
+# التكوين الأساسي للتسجيل (Logging)
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Bot Token and AI API Key from environment variables
+# جلب مفاتيح البيئة
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Flask app setup
+# إعداد تطبيق Flask
 flask_app = Flask(__name__)
 
-# Telegram Bot Application setup
+# إعداد الـ المتغير العالمي للبوت
 application = None
 
-# Configure Google Gemini
+# إعداد ذكاء Gemini الاصطناعي
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel("gemini-pro")
@@ -30,7 +29,7 @@ else:
     logger.warning("GEMINI_API_KEY environment variable not set. AI responses will be disabled.")
     model = None
 
-# Expanded local responses for travel services
+# الردود المحلية التلقائية لخدمات السفر
 LOCAL_RESPONSES = {
     "مرحبا": "أهلاً بك! كيف يمكنني مساعدتك في خدمات السفر؟",
     "أهلاً": "أهلاً بك! كيف يمكنني مساعدتك في خدمات السفر؟",
@@ -49,18 +48,20 @@ LOCAL_RESPONSES = {
 
 async def start(update: Update, context) -> None:
     """Sends a message when the command /start is issued."""
-    user = update.effective_user
-    await update.message.reply_html(
-        f"مرحباً {user.mention_html()}! أنا بوت خدمات السفر الخاص بك. كيف يمكنني مساعدتك اليوم؟",
-    )
+    if update.message:
+        user = update.effective_user
+        await update.message.reply_html(
+            f"مرحباً {user.mention_html()}! أنا بوت خدمات السفر الخاص بك. كيف يمكنني مساعدتك اليوم؟",
+        )
 
 async def help_command(update: Update, context) -> None:
     """Sends a message when the command /help is issued."""
-    await update.message.reply_text("يمكنني مساعدتك في البحث عن خدمات السفر. فقط اسألني عن التأشيرات، تذاكر الطيران، الحج والعمرة، أو أي خدمة أخرى!")
+    if update.message:
+        await update.message.reply_text("يمكنني مساعدتك في البحث عن خدمات السفر. فقط اسألني عن التأشيرات، تذاكر الطيران، الحج والعمرة، أو أي خدمة أخرى!")
 
 async def ai_response(update: Update, context) -> None:
     """Generates an AI response using Google Gemini."""
-    if model:
+    if model and update.message and update.message.text:
         try:
             response = model.generate_content(update.message.text)
             await update.message.reply_text(response.text)
@@ -68,67 +69,86 @@ async def ai_response(update: Update, context) -> None:
             logger.error(f"Error generating AI response: {e}")
             await update.message.reply_text("عذراً، حدث خطأ أثناء محاولة توليد الرد. يرجى المحاولة مرة أخرى لاحقاً.")
     else:
-        await update.message.reply_text("عذراً، وظيفة الذكاء الاصطناعي غير متاحة حالياً.")
+        if update.message:
+            await update.message.reply_text("عذراً، وظيفة الذكاء الاصطناعي غير متاحة حالياً.")
 
 async def handle_message(update: Update, context) -> None:
     """Handles all incoming messages, prioritizing local responses then AI."""
+    if not update.message or not update.message.text:
+        return
+        
     user_message = update.message.text.lower()
 
-    # Check for local responses first
+    # التحقق من الردود المحلية أولاً
     for keyword, response_text in LOCAL_RESPONSES.items():
         if keyword in user_message:
             await update.message.reply_text(response_text)
             return
 
-    # Fallback to AI response if no local response matches
+    # إذا لم يطابق أي رد محلي، يتم التوجه للذكاء الاصطناعي
     await ai_response(update, context)
 
-def setup_application():
-    """Initializes the Telegram application."""
+
+# =====================================================================
+# إدارة حلقة الأحداث (Event Loop) بالخلفية بشكل آمن 100%
+# =====================================================================
+
+bot_loop = asyncio.new_event_loop()
+
+async def init_bot_inside_loop():
+    """بناء وتشغيل البوت بالكامل من داخل الحلقة المخصصة لمنع تضارب الـ Locks"""
     global application
     if not TELEGRAM_BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
-        return None
+        return
+        
+    # البناء يتم هنا داخلياً لربط كل أدوات الاتصال بـ bot_loop
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # إضافة الـ Handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Run initialization in the background loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(app.initialize())
-    
-    return app
+    # تهيئة وبدء تشغيل البوت
+    await application.initialize()
+    await application.start()
+    logger.info("Telegram Application built and initialized successfully inside background loop.")
 
-# Initialize application once when the module is loaded
-if application is None:
-    application = setup_application()
+def start_background_loop(loop):
+    asyncio.set_event_loop(loop)
+    # تشغيل دالة التهيئة أولاً داخل الحلقة
+    loop.run_until_complete(init_bot_inside_loop())
+    # جعل الحلقة تعمل بشكل دائم لاستقبال رسائل الـ Webhook
+    loop.run_forever()
+
+# إطلاق خيط الخلفية عند تشغيل الملف
+loop_thread = threading.Thread(target=start_background_loop, args=(bot_loop,), daemon=True)
+loop_thread.start()
+
 
 @flask_app.route("/")
 def index():
-    return "Bot is running!"
+    return "Bot is running perfectly!"
 
 @flask_app.route("/webhook", methods=["POST"])
-async def webhook():
-    """Webhook endpoint for Telegram updates."""
+def webhook():
+    """مستقبل الـ Webhook (دالة متزامنة متوافقة تماماً مع سيرفر Flask و Render)"""
     if application is None:
         return "Application not initialized", 503
         
-    if request.method == "POST":
-        try:
-            update = Update.de_json(request.get_json(force=True), application.bot)
-            # Use the running loop to process update
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(application.process_update(update))
-            return "ok"
-        except Exception as e:
-            logger.error(f"Error processing update: {e}")
-            return "error", 500
-    return ""
+    try:
+        json_data = request.get_json(force=True)
+        update = Update.de_json(json_data, application.bot)
+        
+        # تمرير التحديث ليعالج بأمان داخل حلقة البوت وبدون أي تداخل مع سيرفرات الويب
+        asyncio.run_coroutine_threadsafe(application.process_update(update), bot_loop)
+        return "ok", 200
+    except Exception as e:
+        logger.error(f"Error processing update in webhook: {e}")
+        return "error", 500
 
 if __name__ == "__main__":
-    # For local testing
-    if application:
-        application.run_polling()
+    # تشغيل محلي (في حال رغبت بالتجربة المحلية)
+    flask_app.run(port=5000)
+
