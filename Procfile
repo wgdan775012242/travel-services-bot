@@ -1,1 +1,1 @@
-web: gunicorn --workers 2 --threads 4 --bind 0.0.0.0:$PORT bot:flask_app
+web: pip install --force-reinstall flask==2.3.3 && gunicorn --workers 2 --threads 4 --bind 0.0.0.0:$PORT bot:flask_app
