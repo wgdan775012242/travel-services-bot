@@ -1,132 +1,112 @@
 import os
 import logging
-import asyncio
+from threading import Thread
 from flask import Flask, request
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
-import google.generativeai as genai
-
-# Enable logging
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Bot Token and AI API Key from environment variables
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Flask app setup
-flask_app = Flask(__name__)
-
-# Telegram Bot Application setup
-application = None
-
-# Configure Google Gemini
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-pro")
-else:
-    logger.warning("GEMINI_API_KEY environment variable not set. AI responses will be disabled.")
-    model = None
-
-# Expanded local responses for travel services
-LOCAL_RESPONSES = {
-    "مرحبا": "أهلاً بك! كيف يمكنني مساعدتك في خدمات السفر؟",
-    "أهلاً": "أهلاً بك! كيف يمكنني مساعدتك في خدمات السفر؟",
-    "خدماتكم": "نقدم خدمات شاملة تشمل: التأشيرات، حج وعمرة، تذاكر طيران، حجز فنادق، باقات سياحية، جوازات، وخدمات توظيف. ما الذي تبحث عنه بالتحديد؟",
-    "تأشيرات": "نقدم خدمات استخراج التأشيرات لمختلف الدول. يرجى تزويدنا بالدولة التي ترغب بالسفر إليها لنقدم لك التفاصيل.",
-    "فيزا": "نقدم خدمات استخراج التأشيرات لمختلف الدول. يرجى تزويدنا بالدولة التي ترغب بالسفر إليها لنقدم لك التفاصيل.",
-    "حج وعمرة": "لدينا باقات مميزة للحج والعمرة. هل ترغب بمعرفة المزيد عن باقات العمرة أو الحج؟",
-    "تذاكر طيران": "يمكننا مساعدتك في حجز تذاكر الطيران لأي وجهة. يرجى تزويدنا بمدينة المغادرة والوصول وتواريخ السفر المفضلة.",
-    "حجز فنادق": "نساعدك في حجز أفضل الفنادق حول العالم. ما هي وجهتك المفضلة ومدة الإقامة؟",
-    "باقات سياحية": "لدينا مجموعة واسعة من الباقات السياحية التي تناسب جميع الأذواق والميزانيات. هل لديك وجهة معينة في ذهنك؟",
-    "جوازات": "نقدم خدمات تجديد واستخراج الجوازات. يرجى التواصل معنا لمزيد من التفاصيل حول المتطلبات.",
-    "خدمات توظيف": "نساعد في توفير فرص عمل في قطاع السفر والسياحة. يرجى إرسال سيرتك الذاتية إلينا.",
-    "شكرا": "على الرحب والسعة! يسعدنا خدمتك.",
-    "مع السلامة": "مع السلامة! نتمنى لك رحلة سعيدة."
-}
-
-async def start(update: Update, context) -> None:
-    """Sends a message when the command /start is issued."""
-    user = update.effective_user
-    await update.message.reply_html(
-        f"مرحباً {user.mention_html()}! أنا بوت خدمات السفر الخاص بك. كيف يمكنني مساعدتك اليوم؟",
-    )
-
-async def help_command(update: Update, context) -> None:
-    """Sends a message when the command /help is issued."""
-    await update.message.reply_text("يمكنني مساعدتك في البحث عن خدمات السفر. فقط اسألني عن التأشيرات، تذاكر الطيران، الحج والعمرة، أو أي خدمة أخرى!")
-
-async def ai_response(update: Update, context) -> None:
-    """Generates an AI response using Google Gemini."""
-    if model:
-        try:
-            response = model.generate_content(update.message.text)
-            await update.message.reply_text(response.text)
-        except Exception as e:
-            logger.error(f"Error generating AI response: {e}")
-            await update.message.reply_text("عذراً، حدث خطأ أثناء محاولة توليد الرد. يرجى المحاولة مرة أخرى لاحقاً.")
-    else:
-        await update.message.reply_text("عذراً، وظيفة الذكاء الاصطناعي غير متاحة حالياً.")
-
-async def handle_message(update: Update, context) -> None:
-    """Handles all incoming messages, prioritizing local responses then AI."""
-    user_message = update.message.text.lower()
-
-    # Check for local responses first
-    for keyword, response_text in LOCAL_RESPONSES.items():
-        if keyword in user_message:
-            await update.message.reply_text(response_text)
-            return
-
-    # Fallback to AI response if no local response matches
-    await ai_response(update, context)
-
-def setup_application():
-    """Initializes the Telegram application."""
-    global application
-    if not TELEGRAM_BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
-        return None
-    
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Run initialization in the background loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(app.initialize())
-    
-    return app
-
-# Initialize application once when the module is loaded
-if application is None:
-    application = setup_application()
-
-@flask_app.route("/")
-def index():
-    return "Bot is running!"
-
-@flask_app.route("/webhook", methods=["POST"])
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+import aiohttp
+import asyncio
+import time# ====================== Logging ======================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)TOKEN = os.environ.get("TOKEN")
+GEMINI_API_KEY = os.environ.get("API_KEY")# ====================== Flask ======================
+flask_app = Flask(__name__)@flask_app.route('/')
+def home():
+    return "<h2> البوت يعمل الآن</h2><p>مكتب أبو مجد الحداد</p>"@flask_app.route('/webhook', methods=['POST'])
 async def webhook():
-    """Webhook endpoint for Telegram updates."""
-    if application is None:
-        return "Application not initialized", 503
-        
-    if request.method == "POST":
-        try:
-            update = Update.de_json(request.get_json(force=True), application.bot)
-            # Use the running loop to process update
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(application.process_update(update))
-            return "ok"
-        except Exception as e:
-            logger.error(f"Error processing update: {e}")
-            return "error", 500
-    return ""
+    if not application:
+        logger.error("Application not initialized")
+        return "Not ready", 503try:
+    update_dict = request.get_json(force=True)
+    update = Update.de_json(update_dict, application.bot)
+    await application.process_update(update)
+    return "OK", 200
+except Exception as e:
+    logger.error(f"Webhook Error: {e}")
+    return "ERROR", 500# ====================== Gemini ======================
+async def ask_gemini(user_message: str) -> str:
+    if not GEMINI_API_KEY:
+        return " الذكاء الاصطناعي غير مفعل حالياً."url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
-if __name__ == "__main__":
-    # For local testing
-    if application:
-        application.run_polling()
+prompt = f"""أنت مساعد مكتب أبو مجد الحداد للسفريات.
+معلومات: هاتف +967775012242
+أجب بلباقة واحترافية على الرسالة التالية:الرسالة: {user_message}
+"""try:
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1000}
+        }, timeout=30) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data['candidates'][0]['content']['parts'][0]['text'].strip()
+            else:
+                return "عذراً، الخدمة مزدحمة. يرجى الاتصال على +967775012242"
+except:
+    return "حدث خطأ. يرجى التواصل على +967775012242"# ====================== Keyboards & Handlers ======================
+def get_main_keyboard():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    keyboard = [
+        [InlineKeyboardButton(" تأشيرات العمل", callback_data="visa")],
+        [InlineKeyboardButton(" حجوزات طيران", callback_data="flights")],
+        [InlineKeyboardButton(" اتصل بنا", callback_data="contact")],
+    ]
+    return InlineKeyboardMarkup(keyboard)async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        " أهلاً وسهلاً بك في مكتب أبو مجد الحداد\n\nكيف يمكنني خدمتك؟",
+        reply_markup=get_main_keyboard()
+    )async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_chat_action(update.effective_chat.id, "typing")
+    text = update.message.text.strip()if len(text) < 3:
+    await update.message.reply_text("أرسل استفسارك بالتفصيل...")
+    return
+
+response = await ask_gemini(text)
+await update.message.reply_text(response, reply_markup=get_main_keyboard())async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()if query.data == "visa":
+    text = " أرسل:\n- الاسم الكامل\n- رقم الجواز\n- المهنة"
+elif query.data == "flights":
+    text = " أرسل تفاصيل الحجز (المدينة - الوجهة - التاريخ)"
+elif query.data == "contact":
+    text = " +967775012242"
+else:
+    text = "اختر من القائمة"
+
+await query.edit_message_text(text=text, reply_markup=get_main_keyboard())# ====================== Main ======================
+application = Noneasync def main():
+    global application
+    if not TOKEN:
+        logger.error("TOKEN مفقود!")
+        returnapplication = Application.builder().token(TOKEN).updater(None).build()
+
+await application.bot.delete_webhook(drop_pending_updates=True)
+
+application.add_handler(CommandHandler("start", start))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
+application.add_handler(CallbackQueryHandler(button_handler))
+
+render_url = os.environ.get("RENDER_EXTERNAL_URL")
+if render_url:
+    webhook_url = f"{render_url.rstrip('/')}/webhook"
+    await application.bot.set_webhook(webhook_url, allowed_updates=Update.ALL_TYPES)
+    logger.info(f" Webhook set to: {webhook_url}")
+else:
+    logger.warning("No RENDER_EXTERNAL_URL found")
+
+await application.initialize()
+await application.start()
+logger.info(" Bot started successfully!")# ====================== Run ======================
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)if __name__ == '__main__':
+    Thread(target=run_flask, daemon=True).start()try:
+    asyncio.run(main())
+    while True:
+        time.sleep(3600)
+except Exception as e:
+    logger.error(f"Critical Error: {e}")
+
