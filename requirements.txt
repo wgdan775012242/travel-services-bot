@@ -4,4 +4,3 @@ flask[async]
 gunicorn
 aiohttp
 nest_asyncio
-gemini-1.5-flash
