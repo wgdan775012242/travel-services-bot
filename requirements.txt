@@ -4,5 +4,4 @@ flask[async]
 gunicorn
 aiohttp
 nest_asyncio
-
-google-generativeai>=0.8.3
+gemini-1.5-flash
