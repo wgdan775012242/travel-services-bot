@@ -1,4 +1,4 @@
-Import nest_asyncio
+import nest_asyncio
 nest_asyncio.apply()
 import os
 import logging
@@ -10,14 +10,14 @@ import google.generativeai as genai
 
 # Enable logging
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(name)
 
 # Bot Token and AI API Key from environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Flask app setup
-flask_app = Flask(__name__)
+flask_app = Flask(name)
 
 # Telegram Bot Application setup
 application = None
@@ -82,53 +82,3 @@ async def handle_message(update: Update, context) -> None:
 
     # Fallback to AI response if no local response matches
     await ai_response(update, context)
-
-def setup_application():
-    """Initializes the Telegram application."""
-    global application
-    if not TELEGRAM_BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
-        return None
-    
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Run initialization in the background loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(app.initialize())
-    
-    return app
-
-# Initialize application once when the module is loaded
-if application is None:
-    application = setup_application()
-
-@flask_app.route("/")
-def index():
-    return "Bot is running!"
-
-@flask_app.route("/webhook", methods=["POST"])
-async def webhook():
-    """Webhook endpoint for Telegram updates."""
-    if application is None:
-        return "Application not initialized", 503
-        
-    if request.method == "POST":
-        try:
-            update = Update.de_json(request.get_json(force=True), application.bot)
-            # Use the running loop to process update
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(application.process_update(update))
-            return "ok"
-        except Exception as e:
-            logger.error(f"Error processing update: {e}")
-            return "error", 500
-    return ""
-
-if __name__ == "__main__":
-    # For local testing
-    if application:
-        application.run_polling()
