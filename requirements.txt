@@ -1,0 +1,6 @@
+python-telegram-bot==21.4
+flask[async]
+gunicorn
+aiohttp
+google-generativeai
+google-generativeai
