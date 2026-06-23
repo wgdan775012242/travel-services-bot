@@ -1,6 +1,2 @@
 python-telegram-bot
-google-generativeai>=0.8.3
-flask[async]
-gunicorn
-aiohttp
-nest_asyncio
+google-generativeai
