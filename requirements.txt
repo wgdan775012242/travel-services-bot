@@ -1,7 +1,4 @@
-python-telegram-bot[webhooks]==20.8
-fastapi
-uvicorn
-httpx
-google-generativeai
-beautifulsoup4
-requests
+python-telegram-bot==20.8
+Flask==3.0.2
+asgiref==3.7.2
+requests==2.31.0
