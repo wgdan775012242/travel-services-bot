@@ -1,7 +1,4 @@
 python-telegram-bot==21.4
-aiohttp
-flask
+flask[async]
 gunicorn
-
-
-
+aiohttp
