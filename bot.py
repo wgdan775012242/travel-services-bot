@@ -3,7 +3,7 @@ import json
 import urllib.request
 import logging
 import asyncio
-from flask import Flask, request, Response
+from flask import Flask, request, Response, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -17,9 +17,15 @@ API_KEY = os.environ.get("API_KEY")
 WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/webhook")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")  # اختياري
 
-if not TOKEN:
-    logger.error("TOKEN غير معرف في متغيرات البيئة")
-    raise RuntimeError("TOKEN env var is required")
+# --- معلومات المكتب ---
+OFFICE_INFO = (
+    "مكتب أبو مجد الحداد للسفريات:\n"
+    "الهاتف: +967775012242\n"
+    "البريد الإلكتروني: what775012242@outlook.sa\n"
+    "فيسبوك: ابومجد الحداد خدمات سفريات وسياحه\n"
+    "انست��رام: وجدان الحداد-ابومجدالحداد\n"
+    "الخدمات: تأشيرات، حجوزات طيران، خدمات سياحية، وسفر.\n"
+)
 
 # --- دالة الاتصال المباشر بـ Gemini (مزامنة) ---
 def ask_gemini_direct(user_message: str) -> str:
@@ -30,12 +36,7 @@ def ask_gemini_direct(user_message: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
 
     prompt = (
-        "معلومات مكتب أبو مجد الحداد للسفريات:\n"
-        "- الهاتف: +967775012242\n"
-        "- البريد الإلكتروني: what775012242@outlook.sa\n"
-        "- فيسبوك: ابومجد الحداد خدمات سفريات وسياحه\n"
-        "- إنستغرام: وجدان الحداد-ابومجدالحداد\n"
-        "- الخدمات: تأشيرات، حجوزات طيران، خدمات سياحية، وسفر.\n\n"
+        f"{OFFICE_INFO}\n"
         "بصفتك مساعداً ذكياً لمكتب أبو مجد الحداد، أجب على رسالة المستخدم التالية بصورة مهنية وودية وباللغة العربية:\n"
         f"{user_message}\n"
         "أجب بإيجاز واذكر إذا كنت بحاجة لمزيد من التفاصيل أو رقم الحجز. لا تضف إعلانات تجارية."
@@ -49,6 +50,7 @@ def ask_gemini_direct(user_message: str) -> str:
             body = response.read().decode('utf-8')
             result = json.loads(body)
 
+            # محاولة استخراج النص من صيغ مختلفة للمخرجات
             if isinstance(result, dict):
                 try:
                     return result['candidates'][0]['content']['parts'][0]['text']
@@ -83,13 +85,18 @@ def ask_gemini_direct(user_message: str) -> str:
         return "عذراً، الخدمة غير متاحة حالياً، يرجى التواصل معنا مباشرة على الرقم: +967775012242"
 
 
-# --- إعداد Flask و Telegram Application ---
+# --- إعداد Flask ---
 app = Flask(__name__)
-application = Application.builder().token(TOKEN).build()
+# expose flask app object as 'flask_app' so gunicorn can import it
+flask_app = app
+
+# --- Telegram application (قد يكون None إذا لم يتوفر TOKEN) ---
+telegram_app = None
 
 # --- Handlers ---
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text('أهلاً بك في مكتب أبو مجد الحداد للسفريات! أنا مساعدك الذكي، كيف يمكنني خدمتك اليوم؟')
+
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text or ""
@@ -97,8 +104,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = await loop.run_in_executor(None, ask_gemini_direct, user_text)
     await update.message.reply_text(response or "عذراً، لم يتم توليد رد.")
 
-application.add_handler(CommandHandler("start", start_handler))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+# --- تهيئة Telegram application فقط إذا كان التوكن معطى ---
+if TOKEN:
+    try:
+        telegram_app = Application.builder().token(TOKEN).build()
+        telegram_app.add_handler(CommandHandler("start", start_handler))
+        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+        logger.info("Telegram Application initialized.")
+    except Exception as e:
+        logger.exception("خطأ أثناء تهيئة Telegram Application: %s", e)
+        telegram_app = None
+else:
+    logger.warning("TOKEN غير معرّف — Telegram bot لن يعمل حتى تضيف TOKEN في متغيرات البيئة.")
+
 
 # --- Webhook route ---
 if WEBHOOK_SECRET:
@@ -106,20 +125,44 @@ if WEBHOOK_SECRET:
 else:
     WEBHOOK_ROUTE = WEBHOOK_PATH
 
+
 @app.route(WEBHOOK_ROUTE, methods=["POST"])
 def telegram_webhook():
+    if telegram_app is None:
+        logger.warning("وصول طلب إلى webhook لكن Telegram application غير مهيأ.")
+        return Response("Bot not configured", status=503)
+
     try:
         data = request.get_json(force=True)
     except Exception as e:
         logger.exception("خطأ في قراءة JSON من Telegram webhook: %s", e)
         return Response(status=400)
 
-    update = Update.de_json(data, application.bot)
-    application.create_task(application.process_update(update))
+    update = Update.de_json(data, telegram_app.bot)
+    telegram_app.create_task(telegram_app.process_update(update))
     return Response(status=200)
 
-# expose flask app object as 'flask_app' so gunicorn can import it
-flask_app = app
+
+# health / index route
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({
+        "service": "travel-services-bot",
+        "telegram_configured": bool(TOKEN),
+        "webhook_route": WEBHOOK_ROUTE
+    }), 200
+
 
 if __name__ == '__main__':
-    flask_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    # تشغيل محلي مخصص للتطوير: إذا توكن موجود سنستخدم polling كخيار اختبار
+    if TOKEN and telegram_app is not None:
+        print("TOKEN معطى — تشغيل polling محلي لاختبار التطوير")
+        try:
+            # تشغيل polling للتطوير (لا يُستخدم في الإنتاج مع Gunicorn)
+            telegram_app.run_polling()
+        except Exception as e:
+            logger.exception("خطأ في تشغيل polling: %s", e)
+    else:
+        # تشغيل flask فقط
+        print("TOKEN غير معطى أو غير صالح — تشغيل Flask فقط على المنفذ 5000")
+        flask_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
