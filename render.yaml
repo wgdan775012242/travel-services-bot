@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: travel-services-bot
+    env: python
+    plan: free
+    buildCommand: bash build.sh
+    startCommand: gunicorn --workers 1 --timeout 60 --bind 0.0.0.0:$PORT bot:flask_app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
