@@ -29,7 +29,7 @@ def home():
     <h2>✅ البوت يعمل بنجاح 24/7</h2>
     <p><strong>مكتب أبو مجد الحداد للسفريات والتأشيرات</strong></p>
     <p>الرابط: https://travel-services-bot.onrender.com</p>
-    <small>Free Tier • قد يستغرق الرد 10-40 ثانية</small>
+    <small>Free Tier • تم تحديث مسار الذكاء الاصطناعي بنجاح</small>
     """
 
 # ====================== Gemini ======================
@@ -37,7 +37,8 @@ async def ask_gemini(user_message: str, max_retries: int = 5) -> str:
     if not GEMINI_API_KEY:
         return "⚠️ خطأ في الإعدادات. يرجى التواصل مع الإدارة."
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # التعديل هنا: تم تحديث الرابط إلى الإصدار المستقر v1 لحل مشكلة الـ 404 المتواجدة في سجلاتك
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     OFFICE_INFO = """
 معلومات مكتب أبو مجد الحداد للسفريات:
@@ -159,7 +160,6 @@ async def main():
         logger.error("TOKEN أو API_KEY مفقود!")
         return
 
-    # تم تعديل هذا السطر بإضافة updater(None) لمنع تعارض getUpdates مع الـ Webhook
     application = Application.builder().token(TOKEN).updater(None).build()
 
     await application.bot.delete_webhook(drop_pending_updates=True)
@@ -195,3 +195,4 @@ if __name__ == '__main__':
         logger.info("Bot stopped")
     except Exception as e:
         logger.error(f"Critical error: {e}")
+
