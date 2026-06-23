@@ -24,8 +24,8 @@ application = None
 
 # Configure Google Gemini
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("google-generativeai>=0.8.4
+    genai.configure("api_key=GEMINI_API_KEY")
+    model = genai.GenerativeModel("google-generativeai>=0.8.3
 ")
     
 else:
