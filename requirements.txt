@@ -5,4 +5,3 @@ aiohttp
 google-generativeai>=0.8.3
 google-generativeai>=0.8.3
 nest_asyncio
-google-generativeai>=0.8.3
