@@ -1,3 +1,5 @@
+Import nest_asyncio
+nest_asyncio.apply()
 import os
 import logging
 import asyncio
