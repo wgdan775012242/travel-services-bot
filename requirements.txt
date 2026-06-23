@@ -4,3 +4,4 @@ gunicorn
 aiohttp
 google-generativeai
 google-generativeai
+nest_asyncio
