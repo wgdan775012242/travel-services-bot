@@ -1,135 +1,181 @@
 import os
+import json
+import asyncio
 import logging
-from threading import Thread
-from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
-import aiohttp
+import httpx
+from contextlib import asynccontextmanager
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import HTMLResponse
+import uvicorn
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+
+# ====================== إعدادات السجلات (Logging) ======================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
+# ====================== متغيرات البيئة ======================
 TOKEN = os.environ.get("TOKEN")
-API_KEY = os.environ.get("API_KEY")
+GEMINI_API_KEY = os.environ.get("API_KEY")
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
-# ====================== Flask ======================
-flask_app = Flask(__name__)
+# التأكد من وجود التوكن
+if not TOKEN:
+    logger.error("⚠️ لم يتم العثور على TOKEN البوت في متغيرات البيئة!")
 
-@flask_app.route('/')
-def home():
-    return "✅ Bot is running | مكتب أبو مجد الحداد"
+# ====================== بناء تطبيق البوت (PTB) ======================
+ptb_app = Application.builder().token(TOKEN).build()
+semaphore = asyncio.Semaphore(4)
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host='0.0.0.0', port=port, debug=False)
+# ====================== الذكاء الاصطناعي (Gemini) ======================
+async def ask_gemini(user_message: str, max_retries: int = 3) -> str:
+    if not GEMINI_API_KEY:
+        return "⚠️ خطأ في الإعدادات (مفتاح API مفقود). يرجى التواصل مع الإدارة."
 
-# ====================== ردود محلية سريعة ======================
-LOCAL_RESPONSES = {
-    "السلام عليكم": "وعليكم السلام ورحمة الله وبركاته 👋\nكيف يمكنني خدمتك اليوم؟",
-    "مرحبا": "مرحبا بك! 👋 كيف أقدر أساعدك في خدمات السفر؟",
-    "كم سعر التأشيرة": "🛂 أسعار التأشيرات تختلف حسب المهنة والجنسية.\nأرسل لي المهنة + الجنسية لأعطيك السعر التقريبي.",
-    "شروط التأشيرة": "🛂 أهم الشروط:\n• جواز سفر ساري الصلاحية\n• صور شخصية\n• عقد عمل\n• شهادة عدم محكومية\n\nأرسل تفاصيلك لأفحصها لك.",
-    "شكرا": "عفواً، في خدمتك دائماً ❤️",
-    "تحياتي": "تحياتي لك! 😊",
-    "ايش خدماتكم": "نقدم خدمات:\n• تأشيرات عمل يمن → سعودية\n• حجوزات طيران\n• تأشيرات زيارة وعمرة\n• خدمات سياحية",
-}
-
-# ====================== Gemini AI ======================
-async def ask_gemini(user_message: str) -> str:
-    if not API_KEY:
-        return "⚠️ الذكاء الاصطناعي غير مفعل.\nيرجى التواصل على: +967775012242"
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
-
-    prompt = f"""
-أنت مساعد مكتب أبو مجد الحداد للسفريات والتأشيرات.
-معلومات: +967775012242
-أجب بلباقة واحترافية.
-
-الرسالة: {user_message}
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    OFFICE_INFO = """
+معلومات مكتب أبو مجد الحداد للسفريات:
+- الهاتف: +967775012242
+- البريد: what775012242@outlook.sa
+- التخصص: تأشيرات عمل يمن → سعودية، حجوزات طيران، خدمات سياحية.
 """
+    SYSTEM_PROMPT = f"""
+{OFFICE_INFO}
+أنت مساعد ذكي ومحترف لمكتب أبو مجد الحداد.
+أجب بلباقة واحترافية، وركز على خدمات السفر والتأشيرات.
+إذا كان السؤال خارج النطاق، اعتذر واقترح التواصل المباشر.
+"""
+    full_prompt = f"{SYSTEM_PROMPT}\n\nرسالة العميل: {user_message}"
+    
+    data = {
+        "contents": [{"parts": [{"text": full_prompt}]}],
+        "generationConfig": {"temperature": 0.75, "maxOutputTokens": 1000}
+    }
+    headers = {"Content-Type": "application/json"}
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.75, "maxOutputTokens": 1000}
-            }, timeout=35) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data['candidates'][0]['content']['parts'][0]['text'].strip()
-    except:
-        pass
-    return "عذراً، الخدمة مزدحمة حالياً.\nيرجى الاتصال على +967775012242"
+    async with httpx.AsyncClient() as client:
+        for attempt in range(max_retries):
+            try:
+                response = await client.post(url, json=data, headers=headers, timeout=30.0)
+                if response.status_code == 200:
+                    result = response.json()
+                    return result['candidates'][0]['content']['parts'][0]['text'].strip()
+                elif response.status_code == 429:
+                    logger.warning("ضغط على خوادم Gemini، جاري إعادة المحاولة...")
+                    await asyncio.sleep((2 ** attempt) * 2)
+                    continue
+                else:
+                    logger.error(f"Gemini API error {response.status_code}: {response.text}")
+            except Exception as e:
+                logger.error(f"محاولة الاتصال {attempt+1} فشلت: {e}")
+                if attempt == max_retries - 1:
+                    return "عذراً، الخدمة مزدحمة حالياً.\nيرجى التواصل مباشرة على: +967775012242"
+                await asyncio.sleep(2)
+    return "حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى."
 
-
-# ====================== Keyboard ======================
+# ====================== لوحة المفاتيح والأزرار ======================
 def get_main_keyboard():
     keyboard = [
         [InlineKeyboardButton("🛂 تأشيرات العمل", callback_data="visa")],
         [InlineKeyboardButton("✈️ حجوزات طيران", callback_data="flights")],
-        [InlineKeyboardButton("🕋 حج وعمرة", callback_data="umrah")],
-        [InlineKeyboardButton("📞 اتصل بنا", callback_data="contact")],
-        [InlineKeyboardButton("❓ أسئلة شائعة", callback_data="faq")]
+        [InlineKeyboardButton("📞 اتصل بنا", callback_data="contact")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-
-# ====================== Handlers ======================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ====================== دوال التعامل مع رسائل البوت ======================
+async def start_cmd(update: Update, context):
     await update.message.reply_text(
-        "👋 أهلاً وسهلاً بك في مكتب أبو مجد الحداد\n\n"
-        "كيف يمكنني خدمتك اليوم؟",
+        "👋 أهلاً وسهلاً بك في *مكتب أبو مجد الحداد*\n\nكيف يمكنني خدمتك اليوم؟",
+        parse_mode='Markdown',
         reply_markup=get_main_keyboard()
     )
 
-
-async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_chat_action(update.effective_chat.id, "typing")
+async def handle_message(update: Update, context):
+    if not update.message or not update.message.text:
+        return
+        
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    user_message = update.message.text.strip()
     
-    text = update.message.text.strip()
-    
-    # التحقق من الردود المحلية أولاً
-    for key in LOCAL_RESPONSES:
-        if key in text or text in key:
-            await update.message.reply_text(LOCAL_RESPONSES[key], reply_markup=get_main_keyboard())
-            return
+    try:
+        async with semaphore:
+            response = await ask_gemini(user_message)
+            await update.message.reply_text(response, reply_markup=get_main_keyboard())
+    except Exception as e:
+        logger.error(f"Error handling message: {e}")
 
-    # إذا لم يجد رد محلي → يستخدم Gemini
-    response = await ask_gemini(text)
-    await update.message.reply_text(response, reply_markup=get_main_keyboard())
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_buttons(update: Update, context):
     query = update.callback_query
     await query.answer()
+    
+    text = "اختر من القائمة 👇"
+    if query.data == "visa":
+        text = "🛂 لتأشيرة العمل أرسل:\n- الاسم الكامل\n- رقم الجواز\n- المهنة"
+    elif query.data == "flights":
+        text = "✈️ أخبرني بتفاصيل الحجز:\n- المدينة المغادرة\n- الوجهة\n- التاريخ"
+    elif query.data == "contact":
+        text = "📞 التواصل المباشر:\n+967775012242"
+    
+    try:
+        await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
+    except Exception as e:
+        logger.error(f"Error updating button text: {e}")
 
-    responses = {
-        "visa": "🛂 لتأشيرة العمل أرسل:\n• الاسم الكامل\n• رقم الجواز\n• المهنة\n• الجنسية",
-        "flights": "✈️ أرسل تفاصيل الحجز:\n• مدينة المغادرة\n• الوجهة\n• التاريخ المطلوب",
-        "umrah": "🕋 خدمات الحج والعمرة متوفرة\nأرسل عدد الأشخاص والتاريخ المقترح",
-        "contact": "📞 التواصل المباشر:\n+967775012242",
-        "faq": "❓ أكتب أي سؤال مثل:\n- كم سعر التأشيرة\n- شروط التأشيرة\n- ايش خدماتكم"
-    }
+# ربط الدوال بالبوت
+ptb_app.add_handler(CommandHandler("start", start_cmd))
+ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+ptb_app.add_handler(CallbackQueryHandler(handle_buttons))
 
-    text = responses.get(query.data, "اختر من القائمة 👇")
-    await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
+# ====================== إعداد خادم FastAPI ======================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # عند تشغيل السيرفر
+    await ptb_app.initialize()
+    if RENDER_URL:
+        webhook_url = f"{RENDER_URL.rstrip('/')}/webhook"
+        await ptb_app.bot.set_webhook(webhook_url, drop_pending_updates=True)
+        logger.info(f"✅ تم تفعيل Webhook بنجاح على: {webhook_url}")
+    await ptb_app.start()
+    
+    yield # هنا يعمل السيرفر
+    
+    # عند إيقاف السيرفر
+    await ptb_app.stop()
+    await ptb_app.shutdown()
 
+app = FastAPI(lifespan=lifespan)
 
-# ====================== Main ======================
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    return """
+    <html>
+        <body style="font-family: Arial, sans-serif; text-align: center; padding-top: 50px; background-color: #f4f4f9;">
+            <h1 style="color: #4CAF50;">✅ البوت يعمل بنجاح 24/7</h1>
+            <h2>مكتب أبو مجد الحداد للسفريات والتأشيرات</h2>
+            <p style="color: #666;">🚀 <b>Powered by:</b> FastAPI & Python-Telegram-Bot v20</p>
+        </body>
+    </html>
+    """
+
+@app.post("/webhook")
+async def webhook_endpoint(request: Request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, ptb_app.bot)
+        await ptb_app.process_update(update)
+        return Response(status_code=200)
+    except Exception as e:
+        logger.error(f"Webhook Error: {e}")
+        return Response(status_code=500)
+
+# ====================== التشغيل المحلي (للتجارب فقط) ======================
 if __name__ == '__main__':
-    if not TOKEN:
-        logger.error("TOKEN مفقود!")
-    if not API_KEY:
-        logger.warning("API_KEY مفقود - Gemini غير مفعل")
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("travel_bot:app", host="0.0.0.0", port=port)
 
-    Thread(target=run_flask, daemon=True).start()
-
-    application = ApplicationBuilder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
-    application.add_handler(CallbackQueryHandler(button_handler))   # ← مهم
-
-    logger.info("🚀 Bot Started Successfully with Local Responses + Gemini")
-    application.run_polling(drop_pending_updates=True)
