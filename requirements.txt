@@ -6,3 +6,4 @@ Flask[async]
 google-generativeai
 google-generativeai==0.8.6
 GoogleGenerativeAI 
+gemini-3.5-flash
