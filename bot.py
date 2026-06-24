@@ -32,8 +32,7 @@ LOCAL_RESPONSES = {
     "شكرا": "عفواً، في خدمتك دائماً ❤️",
     "تحياتي": "تحياتي لك! 😊",
     "ايش خدماتكم": "نقدم خدمات:\n• تأشيرات عمل يمن → سعودية\n• حجوزات طيران\n• تأشيرات زيارة وعمرة\n• خدمات سياحية",
-url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-
+}
 
 # ====================== Gemini AI ======================
 async def ask_gemini(user_message: str) -> str:
