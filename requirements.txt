@@ -1,6 +1,6 @@
 python-telegram-bot
+flask
 google-generativeai
-Flask
 fastapi
 uvicorn
 httpx
