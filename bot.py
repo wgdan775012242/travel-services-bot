@@ -1,3 +1,11 @@
+from telegram import Update
+from telegram.ext import ContextTypes
+
+# تأكد أن تعريف الدالة يبدأ بهذا الشكل:
+async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # كود البوت الخاص بك هنا
+    pass
+
 async def ai_reply(update: Update, context):
     # Defensive checks
     try:
