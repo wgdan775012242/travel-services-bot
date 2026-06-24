@@ -1,9 +1,5 @@
-python-telegram-bot==20.8
-python-telegram-bot==21.4
-python-telegram-bot==20.6
-aiohttp
-Flask[async]
+python-telegram-bot
 google-generativeai
-google-generativeai==0.8.6
-GoogleGenerativeAI 
-gemini-3.5-flash
+fastapi
+uvicorn
+httpx
