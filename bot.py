@@ -1,96 +1,135 @@
 import os
-import json
-import urllib.request
 import logging
-import asyncio  # تمت إضافة مكتبة المهام المتزامنة بدلاً من time
 from threading import Thread
 from flask import Flask
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+import aiohttp
 
-# --- إعداد السجلات ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# --- المفاتيح من متغيرات البيئة في Render ---
 TOKEN = os.environ.get("TOKEN")
 API_KEY = os.environ.get("API_KEY")
 
-# --- إعداد سيرفر وهمي (Flask) ---
+# ====================== Flask ======================
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
-    return "Bot is running!"
+    return "✅ Bot is running | مكتب أبو مجد الحداد"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host='0.0.0.0', port=port)
+    flask_app.run(host='0.0.0.0', port=port, debug=False)
 
-# --- معلومات المكتب ---
-OFFICE_INFO = """
-معلومات مكتب أبو مجد الحداد للسفريات:
-- الهاتف: 967775012242+
-- البريد الإلكتروني: what775012242@outlook.sa
-- التخصص: تأشيرات العمل من اليمن إلى السعودية، حجوزات طيران، خدمات سياحية.
+# ====================== ردود محلية سريعة ======================
+LOCAL_RESPONSES = {
+    "السلام عليكم": "وعليكم السلام ورحمة الله وبركاته 👋\nكيف يمكنني خدمتك اليوم؟",
+    "مرحبا": "مرحبا بك! 👋 كيف أقدر أساعدك في خدمات السفر؟",
+    "كم سعر التأشيرة": "🛂 أسعار التأشيرات تختلف حسب المهنة والجنسية.\nأرسل لي المهنة + الجنسية لأعطيك السعر التقريبي.",
+    "شروط التأشيرة": "🛂 أهم الشروط:\n• جواز سفر ساري الصلاحية\n• صور شخصية\n• عقد عمل\n• شهادة عدم محكومية\n\nأرسل تفاصيلك لأفحصها لك.",
+    "شكرا": "عفواً، في خدمتك دائماً ❤️",
+    "تحياتي": "تحياتي لك! 😊",
+    "ايش خدماتكم": "نقدم خدمات:\n• تأشيرات عمل يمن → سعودية\n• حجوزات طيران\n• تأشيرات زيارة وعمرة\n• خدمات سياحية",
+}
+
+# ====================== Gemini AI ======================
+async def ask_gemini(user_message: str) -> str:
+    if not API_KEY:
+        return "⚠️ الذكاء الاصطناعي غير مفعل.\nيرجى التواصل على: +967775012242"
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+
+    prompt = f"""
+أنت مساعد مكتب أبو مجد الحداد للسفريات والتأشيرات.
+معلومات: +967775012242
+أجب بلباقة واحترافية.
+
+الرسالة: {user_message}
 """
 
-SYSTEM_PROMPT = f"""
-{OFFICE_INFO}
-أنت مساعد آلي ذكي يمثل "مكتب أبو مجد الحداد". 
-أجب بأسلوب مهني. إذا كان الاستفسار خارج السفر والسياحة، اعتذر بلباقة.
-"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.75, "maxOutputTokens": 1000}
+            }, timeout=35) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data['candidates'][0]['content']['parts'][0]['text'].strip()
+    except:
+        pass
+    return "عذراً، الخدمة مزدحمة حالياً.\nيرجى الاتصال على +967775012242"
 
-# --- دالة الاتصال المباشر (تقوم بمحاولة واحدة فقط وترجع النتيجة) ---
-def ask_gemini_single_request(user_message):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
-    full_prompt = f"{SYSTEM_PROMPT}\n\nرسالة العميل: '{user_message}'"
-    
-    data = {"contents": [{"parts": [{"text": full_prompt}]}]}
-    headers = {"Content-Type": "application/json"}
-    
-    req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST')
-    with urllib.request.urlopen(req) as response:
-        result = json.loads(response.read().decode('utf-8'))
-        return result['candidates'][0]['content']['parts'][0]['text']
 
-# --- دوال تليجرام ---
+# ====================== Keyboard ======================
+def get_main_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🛂 تأشيرات العمل", callback_data="visa")],
+        [InlineKeyboardButton("✈️ حجوزات طيران", callback_data="flights")],
+        [InlineKeyboardButton("🕋 حج وعمرة", callback_data="umrah")],
+        [InlineKeyboardButton("📞 اتصل بنا", callback_data="contact")],
+        [InlineKeyboardButton("❓ أسئلة شائعة", callback_data="faq")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ====================== Handlers ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلاً بك في مكتب أبو مجد الحداد. كيف يمكنني مساعدتك اليوم؟")
+    await update.message.reply_text(
+        "👋 أهلاً وسهلاً بك في مكتب أبو مجد الحداد\n\n"
+        "كيف يمكنني خدمتك اليوم؟",
+        reply_markup=get_main_keyboard()
+    )
 
-# هنا يكمن السحر: معالجة ذكية للأخطاء بدون تجميد البوت
+
 async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    await context.bot.send_chat_action(update.effective_chat.id, "typing")
     
-    user_message = update.message.text
-    retries = 3
+    text = update.message.text.strip()
     
-    for i in range(retries):
-        try:
-            # استخدام to_thread يمنع البوت من التجميد لباقي المستخدمين أثناء انتظار رد Gemini
-            response = await asyncio.to_thread(ask_gemini_single_request, user_message)
-            await update.message.reply_text(response)
-            return  # إنهاء الدالة بنجاح
-            
-        except Exception as e:
-            logging.error(f"محاولة {i+1} فشلت: {e}")
-            if "429" in str(e):
-                await asyncio.sleep(5)  # انتظار آمن لا يوقف البوت عن العمل للمستخدمين الآخرين
-            else:
-                await asyncio.sleep(2)
-                
-    # في حال استنفاد كل المحاولات (الضغط شديد جداً من جهة جوجل)
-    await update.message.reply_text("عذراً، الخادم يواجه ضغطاً كبيراً حالياً. يرجى التواصل معنا مباشرة على الرقم: 967775012242+")
+    # التحقق من الردود المحلية أولاً
+    for key in LOCAL_RESPONSES:
+        if key in text or text in key:
+            await update.message.reply_text(LOCAL_RESPONSES[key], reply_markup=get_main_keyboard())
+            return
 
-# --- التشغيل الرئيسي ---
+    # إذا لم يجد رد محلي → يستخدم Gemini
+    response = await ask_gemini(text)
+    await update.message.reply_text(response, reply_markup=get_main_keyboard())
+
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    responses = {
+        "visa": "🛂 لتأشيرة العمل أرسل:\n• الاسم الكامل\n• رقم الجواز\n• المهنة\n• الجنسية",
+        "flights": "✈️ أرسل تفاصيل الحجز:\n• مدينة المغادرة\n• الوجهة\n• التاريخ المطلوب",
+        "umrah": "🕋 خدمات الحج والعمرة متوفرة\nأرسل عدد الأشخاص والتاريخ المقترح",
+        "contact": "📞 التواصل المباشر:\n+967775012242",
+        "faq": "❓ أكتب أي سؤال مثل:\n- كم سعر التأشيرة\n- شروط التأشيرة\n- ايش خدماتكم"
+    }
+
+    text = responses.get(query.data, "اختر من القائمة 👇")
+    await query.edit_message_text(text=text, reply_markup=get_main_keyboard())
+
+
+# ====================== Main ======================
 if __name__ == '__main__':
-    if not TOKEN or not API_KEY:
-        print("خطأ: تأكد من ضبط TOKEN و API_KEY في متغيرات البيئة")
-    else:
-        Thread(target=run_flask, daemon=True).start()
-        
-        application = ApplicationBuilder().token(TOKEN).build()
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
-        
-        print("البوت يعمل الآن ومحمي ضد التوقف...")
-        application.run_polling()
+    if not TOKEN:
+        logger.error("TOKEN مفقود!")
+    if not API_KEY:
+        logger.warning("API_KEY مفقود - Gemini غير مفعل")
+
+    Thread(target=run_flask, daemon=True).start()
+
+    application = ApplicationBuilder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
+    application.add_handler(CallbackQueryHandler(button_handler))   # ← مهم
+
+    logger.info("🚀 Bot Started Successfully with Local Responses + Gemini")
+    application.run_polling(drop_pending_updates=True)
