@@ -78,8 +78,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text)
 
 async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    response = ask_gemini_direct(update.message.text)
-    await update.message.reply_text(response)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
+    user_text = update.message.text.strip()
+    
+    # استدعاء Gemini AI
+    response = await ask_gemini(user_text)   # تأكد أن اسم الدالة ask_gemini
+    
+    try:
+        await update.message.reply_text(response, reply_markup=get_main_keyboard())
+    except Exception as e:
+        logger.error(f"Reply Error: {e}")
+        await update.message.reply_text("عذراً، حدث خطأ أثناء معالجة طلبك.")
 
 # --- التشغيل الرئيسي ---
 if __name__ == '__main__':
