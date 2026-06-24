@@ -2,6 +2,7 @@ import os
 import logging
 import threading
 import asyncio
+import traceback
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
@@ -19,6 +20,7 @@ logger = logging.getLogger('bot')
 # Environment
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN') or os.environ.get('TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY') or os.environ.get('API_KEY')
+ADMIN_CHAT_ID = os.environ.get('ADMIN_CHAT_ID')
 PORT = int(os.environ.get('PORT', 8080))
 
 if not TOKEN:
@@ -48,8 +50,15 @@ async def start(update: Update, context):
     await update.message.reply_text('أهلاً بك في مكتب أبو مجد الحداد!')
 
 async def ai_reply(update: Update, context):
-    user_message = update.message.text or ''
-    logger.info('Received message from %s: %s', update.effective_user.id if update.effective_user else 'unknown', user_message)
+    # Defensive checks
+    try:
+        user_message = getattr(update.message, 'text', '') if update and update.message else ''
+    except Exception:
+        user_message = ''
+
+    logger.info('Received message from %s: %s', update.effective_user.id if update and update.effective_user else 'unknown', user_message)
+
+    resp = None
     try:
         if model:
             # Call Gemini and extract text safely
@@ -63,13 +72,37 @@ async def ai_reply(update: Update, context):
                     text = str(resp)
         else:
             text = 'خدمة الذكاء الاصطناعي غير مفعلة حالياً. تواصل مع المطوّر.'
+
         await update.message.reply_text(text)
-    except Exception:
-        logger.exception('Error while processing AI reply')
+
+    except Exception as e:
+        # Log full traceback and debug info
+        tb = traceback.format_exc()
+        logger.error('Exception in ai_reply: %s', e)
+        logger.error('Traceback:\n%s', tb)
+        try:
+            # Log update object for debugging (may be large)
+            logger.debug('Update object: %s', update)
+            if resp is not None:
+                logger.debug('AI response object: %s', resp)
+        except Exception:
+            logger.exception('Failed to log debug info')
+
+        # Send a friendly message to the user
         try:
             await update.message.reply_text('عذراً، حدث خطأ أثناء معالجة رسالتك.')
         except Exception:
             logger.exception('Failed to send error message to user')
+
+        # Optionally notify admin if ADMIN_CHAT_ID is set
+        if ADMIN_CHAT_ID:
+            try:
+                from telegram import Bot
+                bot = Bot(token=TOKEN)
+                notify_text = f"Bot error for user {update.effective_user.id if update and update.effective_user else 'unknown'}:\n{str(e)}\nSee logs for traceback."
+                bot.send_message(chat_id=ADMIN_CHAT_ID, text=notify_text)
+            except Exception:
+                logger.exception('Failed to notify admin about the error')
 
 application.add_handler(CommandHandler('start', start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
