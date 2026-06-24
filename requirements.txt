@@ -1,5 +1,0 @@
-python-telegram-bot==20.8
-Flask[async]
-fastapi
-uvicorn
-httpx
