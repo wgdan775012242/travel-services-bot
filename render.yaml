@@ -4,7 +4,11 @@ services:
     env: python
     plan: free
     buildCommand: bash build.sh
-    startCommand: gunicorn --workers 1 --timeout 60 --bind 0.0.0.0:$PORT bot:flask_app
+    startCommand: python3 bot.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0
+      - key: TELEGRAM_BOT_TOKEN
+        value: ""
+      - key: GEMINI_API_KEY
+        value: ""
