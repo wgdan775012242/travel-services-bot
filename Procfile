@@ -1,1 +1,1 @@
-worker: python3 travel_bot.py
+web: python3 bot.py
