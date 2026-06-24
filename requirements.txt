@@ -3,3 +3,4 @@ flask==2.3.3
 gunicorn==20.1.0
 google-generativeai==0.8.6
 requests==2.31.0
+aiohttp==3.9.1
