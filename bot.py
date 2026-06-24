@@ -1,89 +1,101 @@
 import os
 import json
-import urllib.request
 import logging
 from threading import Thread
 from flask import Flask
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+import aiohttp
+import asyncio
 
-# --- إعداد السجلات ---
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# ====================== Logging ======================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# --- المفاتيح من متغيرات البيئة في Render ---
+# ====================== Environment Variables ======================
 TOKEN = os.environ.get("TOKEN")
 API_KEY = os.environ.get("API_KEY")
 
-# --- إعداد سيرفر وهمي (Flask) لمنع توقف Render ---
+# ====================== Flask (لـ Render) ======================
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
-    return "Bot is running successfully!"
+    return "✅ Bot is running successfully! | مكتب أبو مجد الحداد"
 
 def run_flask():
-    # Render يمرر المنفذ تلقائياً في متغير البيئة PORT، وإذا لم يجده يفتح منفذ 8080
     port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host='0.0.0.0', port=port)
+    flask_app.run(host='0.0.0.0', port=port, debug=False)
 
-# --- معلومات المكتب وتوجيهات الذكاء الاصطناعي الصارمة ---
+# ====================== Office Info & System Prompt ======================
 OFFICE_INFO = """
-معلومات مكتب أبو مجد الحداد للسفريات:
-- الهاتف: 967775012242+
-- البريد الإلكتروني: what775012242@outlook.sa
-- فيسبوك: ابومجد الحداد خدمات سفريات وسياحه
-- إنستغرام: وجدان الحداد-ابومجدالحداد
-- التخصص: تأشيرات العمل من اليمن إلى السعودية، حجوزات طيران، خدمات سياحية، وسفر.
+مكتب أبو مجد الحداد للسفريات والتأشيرات:
+- الهاتف: +967775012242
+- التخصص: تأشيرات عمل يمن → سعودية، حجوزات طيران، خدمات سياحية.
 """
 
 SYSTEM_PROMPT = f"""
 {OFFICE_INFO}
-أنت مساعد آلي ذكي يمثل "مكتب أبو مجد الحداد".
-مهمتك الوحيدة والأساسية هي الرد على استفسارات العملاء في المجالات التالية فقط:
-1. السفر والسياحة.
-2. تأشيرات العمل (تحديداً من اليمن إلى السعودية).
-3. المعاملات الخاصة بالسفر وحجوزات الطيران.
-
-تعليمات صارمة يجب الالتزام بها:
-- أجب بأسلوب مهني، محترم، وواضح.
-- إذا سألك المستخدم عن أي موضوع خارج هذه التخصصات (مثل البرمجة، السياسة، الأخبار، أو مواضيع عامة)، اعتذر بلباقة وقل: "عذراً، أنا مساعد مخصص فقط لخدمات السفر والسياحة وتأشيرات العمل بمكتب أبو مجد الحداد."
-- لا تقم بتأليف أسعار من عندك. إذا سأل عن سعر غير ثابت، اطلب منه التواصل عبر الهاتف.
+أنت مساعد متخصص ومحترف لمكتب أبو مجد الحداد.
+أجب بلباقة واحترافية، وركز فقط على خدمات السفر والتأشيرات.
+إذا كان السؤال خارج النطاق، اعتذر واقترح التواصل المباشر.
+استخدم إيموجي بشكل مناسب.
 """
 
-# --- دالة الاتصال المباشر بـ Gemini ---
-def ask_gemini_direct(user_message):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
-    full_prompt = f"{SYSTEM_PROMPT}\n\nرسالة العميل: '{user_message}'\nالرد المناسب:"
-    
-    data = {"contents": [{"parts": [{"text": full_prompt}]}]}
-    headers = {"Content-Type": "application/json"}
-    
-    try:
-        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            return result['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        logging.error(f"خطأ في الاتصال بـ Gemini: {e}")
-        return "عذراً، الخدمة تواجه ضغطاً في الوقت الحالي، يرجى التواصل معنا مباشرة على الرقم: 967775012242+"
+# ====================== Gemini AI (محسن) ======================
+async def ask_gemini(user_message: str) -> str:
+    if not API_KEY:
+        return "⚠️ الذكاء الاصطناعي غير مفعل حالياً.\nيرجى التواصل على: +967775012242"
 
-# --- دوال تليجرام ---
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+
+    full_prompt = f"{SYSTEM_PROMPT}\n\nرسالة العميل: {user_message}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={
+                "contents": [{"parts": [{"text": full_prompt}]}],
+                "generationConfig": {"temperature": 0.75, "maxOutputTokens": 1200}
+            }, timeout=35) as resp:
+                
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data['candidates'][0]['content']['parts'][0]['text'].strip()
+                else:
+                    logger.error(f"Gemini Status: {resp.status}")
+                    return "عذراً، الخدمة مزدحمة حالياً.\nيرجى التواصل على +967775012242"
+    except Exception as e:
+        logger.error(f"Gemini Error: {e}")
+        return "حدث خطأ في الاتصال بالذكاء الاصطناعي.\nيرجى التواصل مباشرة على: +967775012242"
+
+
+# ====================== Keyboard ======================
+def get_main_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🛂 تأشيرات العمل", callback_data="visa")],
+        [InlineKeyboardButton("✈️ حجوزات طيران", callback_data="flights")],
+        [InlineKeyboardButton("📞 اتصل بنا", callback_data="contact")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ====================== Handlers ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "أهلاً بك في مكتب أبو مجد الحداد للسفريات! ✈️\n\n"
-        "أنا مساعدك الآلي، متواجد لخدمتك في استفسارات السفر، السياحة، "
-        "وتأشيرات العمل من اليمن إلى السعودية.\n\n"
-        "كيف يمكنني خدمتك اليوم؟"
+    await update.message.reply_text(
+        "👋 أهلاً وسهلاً بك في مكتب أبو مجد الحداد\n\n"
+        "كيف يمكنني خدمتك اليوم؟",
+        reply_markup=get_main_keyboard()
     )
-    await update.message.reply_text(welcome_text)
+
 
 async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     user_text = update.message.text.strip()
-    
-    # استدعاء Gemini AI
-    response = await ask_gemini(user_text)   # تأكد أن اسم الدالة ask_gemini
+    response = await ask_gemini(user_text)
     
     try:
         await update.message.reply_text(response, reply_markup=get_main_keyboard())
@@ -91,18 +103,24 @@ async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Reply Error: {e}")
         await update.message.reply_text("عذراً، حدث خطأ أثناء معالجة طلبك.")
 
-# --- التشغيل الرئيسي ---
+
+# ====================== Main ======================
 if __name__ == '__main__':
     if not TOKEN:
-        print("خطأ: يرجى التأكد من إضافة TOKEN في متغيرات البيئة")
-    else:
-        # 1. تشغيل السيرفر الوهمي في خلفية الكود لخدع منصة Render المجانية
-        Thread(target=run_flask, daemon=True).start()
-        print("تم تشغيل السيرفر الوهمي بنجاح...")
+        logger.error("❌ TOKEN مفقود في Environment Variables!")
+        exit(1)
+    
+    if not API_KEY:
+        logger.warning("⚠️ API_KEY (Gemini) غير موجود - سيتم استخدام ردود محدودة")
 
-        # 2. تشغيل بوت تليجرام كالمعتاد
-        application = ApplicationBuilder().token(TOKEN).build()
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
-        print("البوت يعمل الآن ويستمع لرسائل العملاء بشكل مخصص...")
-        application.run_polling()
+    # تشغيل Flask في الخلفية
+    Thread(target=run_flask, daemon=True).start()
+
+    # تشغيل البوت
+    application = ApplicationBuilder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
+
+    logger.info("🚀 Bot started successfully with Gemini AI!")
+    application.run_polling(drop_pending_updates=True)
