@@ -67,7 +67,7 @@ async def ai_reply(update: Update, context):
 
         # Send a friendly message to the user
         try:
-            await update.message.reply_text('عذراً، حدث خطأ أثناء معالجة رسالتك.')
+            await update.message.reply_text('عذراً، حدث خطأ أثناء معالجة رسالتك اتوصل علا الرقم +967775012242.')
         except Exception:
             logger.exception('Failed to send error message to user')
 
