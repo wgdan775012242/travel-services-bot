@@ -1,4 +1,3 @@
 python-telegram-bot==20.8
 flask
-google-generativeai==0.8.6
 requests
