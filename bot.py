@@ -57,7 +57,6 @@ async def ai_reply(update: Update, context):
             # Different SDK versions may return different shapes; try common attributes
             text = getattr(resp, 'text', None)
             if not text:
-                # try nested
                 try:
                     text = resp.output[0].content[0].text
                 except Exception:
@@ -82,21 +81,28 @@ flask_app = Flask(__name__)
 def index():
     return 'OK', 200
 
-# Run the telegram polling in a background thread so the Flask server can run in the main thread
-def run_polling():
-    """Run the telegram bot polling in a dedicated asyncio event loop."""
-    try:
-        asyncio.run(application.run_polling())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info('Polling stopped')
-    except Exception:
-        logger.exception('Polling terminated with an exception')
+# Run Flask in a background thread so the telegram polling can run in the main thread
+def run_flask():
+    logger.info('Starting Flask web server in background thread on port %s', PORT)
+    # Use Flask's built-in server; Render/Gunicorn will manage production differently
+    flask_app.run(host='0.0.0.0', port=PORT)
 
 if __name__ == '__main__':
-    # Start polling in background
-    t = threading.Thread(target=run_polling, daemon=True)
-    t.start()
+    # Start Flask in background thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
 
-    # Start Flask app (will bind to $PORT provided by Render/Heroku)
-    logger.info('Starting Flask web server on port %s', PORT)
-    flask_app.run(host='0.0.0.0', port=PORT)
+    # Run the telegram polling in the main thread (so signal handlers can be registered)
+    logger.info('Starting telegram polling (this will block the main thread)')
+    try:
+        # If run_polling is a coroutine, run it with asyncio.run in the main thread
+        # Otherwise, call it directly. We handle both cases.
+        run_poll = application.run_polling
+        if asyncio.iscoroutinefunction(run_poll):
+            asyncio.run(run_poll())
+        else:
+            run_poll()
+    except (KeyboardInterrupt, SystemExit):
+        logger.info('Polling stopped by KeyboardInterrupt/SystemExit')
+    except Exception:
+        logger.exception('Polling terminated with an exception')
