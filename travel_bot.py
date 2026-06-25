@@ -22,10 +22,12 @@ flask_app = Flask(__name__)
 # Telegram Bot Application setup
 application = None
 
-# Configure Google Gemini
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+# ====================== Gemini AI (محسن) ======================
+async def ask_gemini(user_message: str, max_retries: int = 4) -> str:
+    if not GEMINI_API_KEY:
+        return "⚠️ لم يتم إعداد مفتاح API. يرجى التواصل مع الإدارة."
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
     
 else:
