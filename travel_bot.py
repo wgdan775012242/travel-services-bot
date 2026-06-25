@@ -29,9 +29,35 @@ LOCAL_RESPONSES = {
     "ايش خدماتكم": "نقدم:\n• تأشيرات عمل يمن → سعودية\n• حجوزات طيران\n• تأشيرات زيارة وعمرة\n• خدمات سياحية",
 }
 
-# ====================== النظام المرن للذكاء الاصطناعي ======================
-MODELS_LIST = ["gemini-1.5-flash", "gemini-1.0-pro"]
+# ====================== النظام المرن للذكاء الاصطناعي =====================
+# في أعلى الملف مع باقي الاستدعاءات، أضف هذا السطر:
+from google import genai
 
+# ... (باقي إعدادات البوت والـ Flask) ...
+
+async def ask_gemini(user_message: str) -> str:
+    if not GEMINI_API_KEY:
+        return "⚠️ خدمة الذكاء الاصطناعي غير متوفرة حالياً."
+
+    # تهيئة الاتصال بالمكتبة الجديدة
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    system_prompt = "أنت مساعد متخصص لمكتب أبو مجد الحداد للسفريات والتأشيرات. كن لبقاً، استخدم الإيموجي، واطلب التفاصيل إذا كان السؤال عن الأسعار."
+
+    try:
+        # استخدام الكود الجديد الذي أحضرته أنت!
+        response = client.models.generate_content(
+            model='gemini-2.5-flash', # الآن سيعمل هذا النموذج الحديث بنجاح
+            contents=f"{system_prompt}\n\nالعميل: {user_message}",
+            config={
+                'temperature': 0.7,
+            }
+        )
+        return response.text.strip()
+        
+    except Exception as e:
+        logger.error(f"Gemini Error: {e}")
+        return "عذراً، الخدمة مزدحمة حالياً. تواصل معنا على +967775012242"
 
 
 async def ask_gemini(user_message: str) -> str:
