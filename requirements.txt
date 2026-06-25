@@ -2,4 +2,3 @@ python-telegram-bot
 google-generativeai
 flask
 nest_asyncio
-gemini
