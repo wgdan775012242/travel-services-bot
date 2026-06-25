@@ -1,159 +1,136 @@
+import nest_asyncio
+nest_asyncio.apply()
 import os
 import logging
 import asyncio
-from threading import Thread
-from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from flask import Flask, request
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import google.generativeai as genai
 
-# --- إعداد السجلات ---
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Enable logging
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- المتغيرات البيئية ---
-TOKEN = os.environ.get("TOKEN")
-API_KEY = os.environ.get("API_KEY")
+# Bot Token and AI API Key from environment variables
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# --- إعداد سيرفر وهمي (Flask) لمنع توقف Render ---
+# Flask app setup
 flask_app = Flask(__name__)
-@flask_app.route('/')
-def home():
-    return "Bot is running successfully!"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host='0.0.0.0', port=port)
+# Telegram Bot Application setup
+application = None
 
-# --- إعداد Gemini ---
-if API_KEY:
-    genai.configure(api_key=API_KEY)
-    # نستخدم الموديل 1.5 لأنه أسرع وأكثر استقراراً
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Configure Google Gemini
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    
+else:
+    logger.warning("GEMINI_API_KEY environment variable not set. AI responses will be disabled.")
+    model = None
 
-model = genai.GenerativeModel('gemini-pro')
-
-
-# --- الردود المحلية السريعة (تطبع فوراً بدون الذكاء الاصطناعي) ---
+# Expanded local responses for travel services
 LOCAL_RESPONSES = {
-    "رقم": "📞 رقم التواصل المباشر مع مكتب أبو مجد الحداد هو: +967775012242",
-    "تواصل": "يمكنك التواصل معنا عبر:\n- هاتف/واتساب: +967775012242\n- البريد: what775012242@outlook.sa",
-    "موقع": "نحن نعمل إلكترونياً ونقدم خدماتنا في استخراج التأشيرات وحجوزات الطيران أينما كنت. تواصل معنا عبر الواتساب.",
-    "سعر": "الأسعار تعتمد على نوع الخدمة والوقت. يرجى التواصل معنا عبر الواتساب على +967775012242 لمعرفة التفاصيل بدقة."
+    "مرحبا": "أهلاً بك! كيف يمكنني مساعدتك في خدمات السفر؟",
+    "أهلاً": "أهلاً بك! كيف يمكنني مساعدتك في خدمات السفر؟",
+    "خدماتكم": "نقدم خدمات شاملة تشمل: التأشيرات، حج وعمرة، تذاكر طيران، حجز فنادق، باقات سياحية، جوازات، وخدمات توظيف. ما الذي تبحث عنه بالتحديد؟",
+    "تأشيرات": "نقدم خدمات استخراج التأشيرات لمختلف الدول. يرجى تزويدنا بالدولة التي ترغب بالسفر إليها لنقدم لك التفاصيل.",
+    "فيزا": "نقدم خدمات استخراج التأشيرات لمختلف الدول. يرجى تزويدنا بالدولة التي ترغب بالسفر إليها لنقدم لك التفاصيل.",
+    "حج وعمرة": "لدينا باقات مميزة للحج والعمرة. هل ترغب بمعرفة المزيد عن باقات العمرة أو الحج؟",
+    "تذاكر طيران": "يمكننا مساعدتك في حجز تذاكر الطيران لأي وجهة. يرجى تزويدنا بمدينة المغادرة والوصول وتواريخ السفر المفضلة.",
+    "حجز فنادق": "نساعدك في حجز أفضل الفنادق حول العالم. ما هي وجهتك المفضلة ومدة الإقامة؟",
+    "باقات سياحية": "لدينا مجموعة واسعة من الباقات السياحية التي تناسب جميع الأذواق والميزانيات. هل لديك وجهة معينة في ذهنك؟",
+    "جوازات": "نقدم خدمات تجديد واستخراج الجوازات. يرجى التواصل معنا لمزيد من التفاصيل حول المتطلبات.",
+    "خدمات توظيف": "نساعد في توفير فرص عمل في قطاع السفر والسياحة. يرجى إرسال سيرتك الذاتية إلينا.",
+    "شكرا": "على الرحب والسعة! يسعدنا خدمتك.",
+    "مع السلامة": "مع السلامة! نتمنى لك رحلة سعيدة."
 }
 
-# --- التوجيهات الأساسية للذكاء الاصطناعي ---
-SYSTEM_PROMPT = """
-معلومات مكتب أبو مجد الحداد للسفريات:
-- الهاتف: 967775012242+
-- البريد: what775012242@outlook.sa
-- التخصص: تأشيرات العمل من اليمن إلى السعودية، وحجوزات الطيران.
-
-تعليماتك:
-1. أنت تمثل خدمة عملاء مكتب أبو مجد الحداد.
-2. أجب باحترافية، ولطف، واختصار.
-3. إذا سأل المستخدم خارج مجالات السفر أو التأشيرات، اعتذر بلباقة.
-4. لا تخمن أسعاراً أبداً. اطلب من العميل التواصل عبر الواتساب للاستفسار عن الأسعار.
-"""
-
-# --- دالة الاتصال بـ Gemini ---
-def fetch_gemini_response(user_text):
-    try:
-        full_prompt = f"{SYSTEM_PROMPT}\n\nسؤال العميل: {user_text}"
-        response = model.generate_content(full_prompt)
-        return response.text
-    except Exception as e:
-        logger.error(f"Gemini Error: {e}")
-        # سيقوم البوت بإرجاع الخطأ التقني هنا لتعرف أنت كمطور أين الخلل
-        return f"عذراً، حدث خطأ تقني أثناء الاتصال بالذكاء الاصطناعي:\n`{str(e)}`\n\nيرجى التواصل معنا مؤقتاً عبر: +967775012242"
-
-# --- دوال تليجرام ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "أهلاً بك في مكتب أبو مجد الحداد للسفريات! ✈️\n\n"
-        "أنا المساعد الآلي للمكتب، متواجد لخدمتك في استفسارات تأشيرات العمل وحجوزات الطيران.\n\n"
-        "يرجى اختيار إحدى الخدمات من القائمة أو كتابة استفسارك مباشرة:"
+async def start(update: Update, context) -> None:
+    """Sends a message when the command /start is issued."""
+    user = update.effective_user
+    await update.message.reply_html(
+        f"مرحباً {user.mention_html()}! أنا بوت خدمات السفر الخاص بك. كيف يمكنني مساعدتك اليوم؟",
     )
-    
-    # 1. أزرار القائمة الشفافة (Inline Keyboard)
-    inline_keyboard = [
-        [InlineKeyboardButton("🛂 تأشيرات العمل (يمن - سعودية)", callback_data='visa')],
-        [InlineKeyboardButton("✈️ حجوزات الطيران", callback_data='flight'), 
-         InlineKeyboardButton("📞 تواصل معنا", callback_data='contact')]
-    ]
-    reply_markup_inline = InlineKeyboardMarkup(inline_keyboard)
 
-    # 2. أزرار لوحة المفاتيح السفلية (Reply Keyboard)
-    reply_keyboard = [
-        [KeyboardButton("أرقام التواصل"), KeyboardButton("مواعيد العمل")]
-    ]
-    reply_markup_bottom = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+async def help_command(update: Update, context) -> None:
+    """Sends a message when the command /help is issued."""
+    await update.message.reply_text("يمكنني مساعدتك في البحث عن خدمات السفر. فقط اسألني عن التأشيرات، تذاكر الطيران، الحج والعمرة، أو أي خدمة أخرى!")
 
-    # إرسال الترحيب مع الأزرار
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup_inline)
-    await update.message.reply_text("أو استخدم الأزرار السريعة بالأسفل 👇", reply_markup=reply_markup_bottom)
+async def ai_response(update: Update, context) -> None:
+    """Generates an AI response using Google Gemini."""
+    if model:
+        try:
+            response = model.generate_content(update.message.text)
+            await update.message.reply_text(response.text)
+        except Exception as e:
+            logger.error(f"Error generating AI response: {e}")
+            await update.message.reply_text("عذراً، حدث خطأ أثناء محاولة توليد الرد. يرجى المحاولة مرة أخرى لاحقاً.")
+    else:
+        await update.message.reply_text("عذراً، وظيفة الذكاء الاصطناعي غير متاحة حالياً.")
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """التعامل مع ضغطات الأزرار الشفافة"""
-    query = update.callback_query
-    await query.answer() # ضروري لكي لا يعلق زر التليجرام
-    
-    if query.data == 'visa':
-        text = "🛂 نحن متخصصون في استخراج وتسهيل تأشيرات العمل من اليمن إلى المملكة العربية السعودية. يرجى تجهيز أوراقك والتواصل معنا عبر الواتساب للبدء في الإجراءات."
-    elif query.data == 'flight':
-        text = "✈️ نوفر حجوزات طيران لأغلب الوجهات العالمية بأفضل الأسعار. يرجى تزويدنا بوجهة السفر وتاريخ الرحلة وسنقوم بخدمتك."
-    elif query.data == 'contact':
-        text = "📞 للتواصل المباشر مع مكتب أبو مجد الحداد:\n- واتساب/هاتف: +967775012242\n- بريد إلكتروني: what775012242@outlook.sa"
-    
-    # تعديل الرسالة لتعرض الرد
-    await query.edit_message_text(text=text)
+async def handle_message(update: Update, context) -> None:
+    """Handles all incoming messages, prioritizing local responses then AI."""
+    user_message = update.message.text.lower()
 
-async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    if not user_message:
-        return
-
-    # 1. البحث في الردود الخاصة بالكيبورد السفلي
-    if user_message == "أرقام التواصل":
-        await update.message.reply_text("📞 هاتف/واتساب: +967775012242")
-        return
-    elif user_message == "مواعيد العمل":
-        await update.message.reply_text("نعمل على مدار الأسبوع لخدمتكم. اترك رسالتك وسنرد في أقرب وقت متاح.")
-        return
-
-    # 2. البحث في الكلمات المفتاحية (الردود المحلية السريعة)
-    for key, reply in LOCAL_RESPONSES.items():
-        if key in user_message:
-            await update.message.reply_text(reply)
+    # Check for local responses first
+    for keyword, response_text in LOCAL_RESPONSES.items():
+        if keyword in user_message:
+            await update.message.reply_text(response_text)
             return
 
-    # 3. إظهار حالة "جاري الكتابة..." ليعلم المستخدم أن البوت يعمل
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    # Fallback to AI response if no local response matches
+    await ai_response(update, context)
 
-    # 4. إرسال الطلب لـ Gemini بشكل منفصل (async) لتجنب توقف السيرفر
-    ai_response = await asyncio.to_thread(fetch_gemini_response, user_message)
+def setup_application():
+    """Initializes the Telegram application."""
+    global application
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
+        return None
+    
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Run initialization in the background loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(app.initialize())
+    
+    return app
 
-    # 5. إرسال الرد للمستخدم
-    await update.message.reply_text(ai_response)
+# Initialize application once when the module is loaded
+if application is None:
+    application = setup_application()
 
-# --- التشغيل الرئيسي ---
-if __name__ == '__main__':
-    if not TOKEN:
-        logger.error("خطأ: يرجى التأكد من إضافة TOKEN في متغيرات البيئة")
-    elif not API_KEY:
-        logger.error("خطأ: يرجى التأكد من إضافة API_KEY في متغيرات البيئة")
-    else:
-        # 1. تشغيل السيرفر الوهمي في خلفية الكود
-        Thread(target=run_flask, daemon=True).start()
-        logger.info("تم تشغيل السيرفر الوهمي بنجاح...")
+@flask_app.route("/")
+def index():
+    return "Bot is running!"
 
-        # 2. تشغيل تطبيق البوت
-        application = ApplicationBuilder().token(TOKEN).build()
+@flask_app.route("/webhook", methods=["POST"])
+async def webhook():
+    """Webhook endpoint for Telegram updates."""
+    if application is None:
+        return "Application not initialized", 503
         
-        # إضافة معالجات الأوامر والرسائل
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CallbackQueryHandler(button_handler)) # معالج الأزرار الشفافة
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
-        
-        logger.info("البوت يعمل الآن باحترافية ويستمع للرسائل...")
+    if request.method == "POST":
+        try:
+            update = Update.de_json(request.get_json(force=True), application.bot)
+            # Use the running loop to process update
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(application.process_update(update))
+            return "ok"
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
+            return "error", 500
+    return ""
+
+if __name__ == "__main__":
+    # For local testing
+    if application:
         application.run_polling()
+
