@@ -8,7 +8,6 @@ from threading import Thread
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
-import google.generativeai as genai
 
 # ====================== الإعدادات ======================
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
