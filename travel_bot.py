@@ -12,8 +12,9 @@ logger = logging.getLogger("travel_bot")
 # --- المفاتيح من متغيرات البيئة ---
 TOKEN = os.environ.get("TOKEN")
 API_KEY = os.environ.get("API_KEY")
+RENDER_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
 
-# --- معلومات المكتب (مدمجة) ---
+# --- معلومات المكتب ---
 OFFICE_INFO = (
     "معلومات مكتب أبو مجد الحداد للسفريات:\n"
     "- الهاتف: +967775012242\n"
@@ -43,11 +44,11 @@ def ask_gemini(user_message: str) -> str:
     )
 
     try:
-        response = client.responses.generate(
-            model="gemini-3.5-flash",   # النموذج الموصى به
-            input=prompt
+        response = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=[{"parts":[{"text": prompt}]}]
         )
-        return response.output_text or "عذراً، لم يتم توليد رد."
+        return response.text or "عذراً، لم يتم توليد رد."
     except Exception as e:
         logger.exception("خطأ في الاتصال بـ Gemini: %s", e)
         return "عذراً، الخدمة غير متاحة حالياً، يرجى التواصل معنا مباشرة على الرقم: +967775012242"
@@ -62,7 +63,7 @@ async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = await loop.run_in_executor(None, ask_gemini, user_text)
     await update.message.reply_text(response)
 
-# --- التشغيل الرئيسي ---
+# --- التشغيل الرئيسي باستخدام Webhook ---
 if __name__ == '__main__':
     if not TOKEN:
         logger.error("TOKEN غير معرّف في متغيرات البيئة. تأكد من إضافته قبل التشغيل.")
@@ -71,6 +72,17 @@ if __name__ == '__main__':
         application = ApplicationBuilder().token(TOKEN).build()
         application.add_handler(CommandHandler("start", start))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
-        logger.info("البوت يعمل الآن ويستمع للرسائل...")
-        print("البوت يعمل الآن ويستمع للرسائل...")
-        application.run_polling()
+
+        # تشغيل Webhook بدل Polling
+        port = int(os.environ.get("PORT", 8443))
+        webhook_url = f"https://{RENDER_HOSTNAME}/{TOKEN}"
+
+        logger.info(f"البوت يعمل الآن عبر Webhook على {webhook_url}")
+        print(f"البوت يعمل الآن عبر Webhook على {webhook_url}")
+
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=TOKEN,
+            webhook_url=webhook_url
+        )
