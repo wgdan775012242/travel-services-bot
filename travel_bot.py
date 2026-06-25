@@ -25,7 +25,7 @@ application = None
 # Configure Google Gemini
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-3.5-flash")
+    model = genai.GenerativeModel("gemini-1.5-flash")
     
 else:
     logger.warning("GEMINI_API_KEY environment variable not set. AI responses will be disabled.")
