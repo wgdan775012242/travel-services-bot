@@ -30,7 +30,8 @@ LOCAL_RESPONSES = {
 }
 
 # ====================== النظام المرن للذكاء الاصطناعي ======================
-MODELS_LIST = ["gemini-1.5-flash-latest", "gemini-pro"]
+MODELS_LIST = ["gemini-1.5-flash", "gemini-1.0-pro"]
+
 
 
 async def ask_gemini(user_message: str) -> str:
