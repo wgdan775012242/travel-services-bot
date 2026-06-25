@@ -1,7 +1,6 @@
 import nest_asyncio
 nest_asyncio.apply()
 
-# الآن يمكنك إكمال باقي الاستدعاءات وكود البوت الخاص بك بشكل طبيعي...
 import asyncio
 import os
 import logging
@@ -20,6 +19,7 @@ GEMINI_API_KEY = os.environ.get("API_KEY")
 
 flask_app = Flask(__name__)
 application = None
+bot_loop = None  # الجسر الذي سيربط السيرفر بالبوت
 
 # ====================== الردود المحلية ======================
 LOCAL_RESPONSES = {
@@ -77,16 +77,20 @@ def home():
 
 @flask_app.route('/webhook', methods=['POST'])
 def webhook():
-    global application
+    global application, bot_loop
     if request.method == "POST":
         update = Update.de_json(request.get_json(force=True), application.bot)
-        asyncio.run_coroutine_threadsafe(application.process_update(update), asyncio.get_event_loop())
+        # هنا يتم استخدام الجسر بدلاً من Loop السيرفر المنفصل
+        if bot_loop:
+            asyncio.run_coroutine_threadsafe(application.process_update(update), bot_loop)
         return "OK", 200
     return "Method Not Allowed", 405
 
 # ====================== التشغيل الأساسي ======================
 async def main():
-    global application
+    global application, bot_loop
+    bot_loop = asyncio.get_running_loop()  # حفظ دورة تشغيل البوت هنا
+    
     application = Application.builder().token(TOKEN).updater(None).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -111,3 +115,4 @@ def run_flask():
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
     asyncio.run(main())
+
