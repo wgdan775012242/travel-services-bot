@@ -29,6 +29,7 @@ def run_flask():
 if API_KEY:
     genai.configure(api_key=API_KEY)
     # نستخدم الموديل 1.5 لأنه أسرع وأكثر استقراراً
+  model = genai.GenerativeModel('gemini-1.5-flash')
     model = genai.GenerativeModel('gemini-pro')
 
 
