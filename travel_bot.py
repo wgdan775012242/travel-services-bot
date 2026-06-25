@@ -31,7 +31,7 @@ def ask_gemini_direct(user_message: str) -> str:
         logger.error("API_KEY غير معرّف في متغيرات البيئة")
         return "عذراً، خدمة الذكاء الاصطناعي غير مفعلة حالياً. الرجاء التواصل معنا مباشرة على الرقم: +967775012242"
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
 
     prompt = (
         f"{OFFICE_INFO}\n"
